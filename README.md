@@ -24,6 +24,7 @@ flowchart LR
     USER[Usuario]
     WPP[WhatsApp]
     NINA[Nina - Microsoft Copilot]
+    LLM[LLM Provider - OpenAI]
     DIGI[Digibee]
 
     LECOM[Lecom]
@@ -36,7 +37,10 @@ flowchart LR
     USER -->|Mensagem em linguagem natural| WPP
     WPP -->|Webhook de entrada| NINA
 
-    NINA -->|Intencao + entidades extraidas| DIGI
+    NINA -->|Prompt de classificacao e extracao| LLM
+    LLM -->|Intencao, entidades e plano de consulta| NINA
+
+    NINA -->|Requisicao estruturada: intencao + entidades + contexto| DIGI
 
     DIGI -->|Consulta/atualizacao de cadastro| LECOM
     DIGI -->|Criacao/consulta de pedido| PORTAL
@@ -52,7 +56,9 @@ flowchart LR
     LOOGAI --> DIGI
     ITSM --> DIGI
 
-    DIGI -->|Payload consolidado| NINA
+    DIGI -->|Payload consolidado com dados de negocio| NINA
+    NINA -->|Prompt para composicao da resposta final| LLM
+    LLM -->|Resposta natural estruturada para o canal| NINA
     NINA -->|Resposta em linguagem natural| WPP
     WPP -->|Mensagem final| USER
 ```
@@ -93,6 +99,7 @@ flowchart LR
 
 ### APIs envolvidas
 - Endpoint de inferencia da Nina/Copilot.
+- API de inferencia da **OpenAI** como provider LLM (ex.: Responses API/Chat Completions).
 - Endpoint de chamada para o Digibee (sincrono ou assincrono).
 - Endpoint de callback para resposta consolidada, quando aplicavel.
 
@@ -106,6 +113,26 @@ flowchart LR
 - Entidades extraidas (CNPJ, numero do pedido, codigo do cliente, ticket).
 - Resultado consolidado retornado pelo Digibee.
 - Resposta textual final para o usuario no WhatsApp.
+
+### Chamadas explicitas da Nina e fluxo de entrada/saida
+1. **Entrada (WhatsApp -> Nina)**
+   - `input_text`: mensagem em linguagem natural.
+   - `channel_context`: telefone, sessao, timestamp, idioma.
+
+2. **Nina -> LLM (OpenAI) - Interpretacao**
+   - Envia prompt com contexto da conversa e politicas de seguranca.
+   - Recebe `intent`, `entities`, `confidence` e `required_systems`.
+
+3. **Nina -> Digibee - Orquestracao**
+   - Envia payload estruturado com intencao e entidades.
+   - Recebe resposta consolidada com dados dos sistemas corporativos.
+
+4. **Nina -> LLM (OpenAI) - Composicao da resposta**
+   - Envia dados consolidados retornados pelo Digibee.
+   - Recebe texto final, objetivo e adequado ao canal WhatsApp.
+
+5. **Saida (Nina -> WhatsApp -> Usuario)**
+   - Mensagem final com resposta de negocio e orientacoes de proximo passo.
 
 ---
 
@@ -260,11 +287,11 @@ flowchart LR
 1. **Usuario envia mensagem em linguagem natural no WhatsApp**  
    Exemplo: "Qual a previsao de entrega do pedido 12345 e meu limite de credito?"
 
-2. **Nina (Copilot) interpreta a mensagem**  
-   Extrai intencao e entidades (pedido, cliente, cnpj, etc.).
+2. **Nina (Copilot) chama a LLM (OpenAI) para interpretar a mensagem**  
+   Extrai intencao, entidades (pedido, cliente, cnpj, etc.) e quais sistemas consultar.
 
 3. **Nina chama o Digibee como camada unica de integracao**  
-   A Nina nao consulta sistemas de negocio diretamente.
+   Envia uma requisicao estruturada com os dados de entrada e nao consulta sistemas diretamente.
 
 4. **Digibee orquestra as chamadas necessarias**  
    - TOTVS/Datasul para status ERP/pedido  
@@ -276,8 +303,8 @@ flowchart LR
 5. **Digibee consolida os resultados**  
    Normaliza campos, trata erros e devolve payload canonico para Nina.
 
-6. **Nina gera resposta final com IA**  
-   Cria texto claro e contextualizado para o usuario.
+6. **Nina chama novamente a LLM (OpenAI) para compor a resposta final**  
+   Usa o payload consolidado do Digibee para gerar texto claro e contextualizado.
 
 7. **WhatsApp entrega a resposta ao usuario**  
    Inclui, quando necessario, instrucoes de proximo passo.
