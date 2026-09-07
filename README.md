@@ -15,6 +15,11 @@ Este documento descreve a arquitetura de integracao entre o **Digibee** e os sis
 
 **Toda requisicao de negocio deve passar pelo Digibee**, que e o hub oficial de integracao, governanca, seguranca, observabilidade e orquestracao.
 
+### Documentacao oficial (Digibee)
+- API Trigger (exposicao de pipelines via REST): https://docs.digibee.com/documentation/connectors-and-triggers/triggers/web-protocols/api
+- REST V2 Connector (consumo de APIs externas): https://docs.digibee.com/documentation/connectors-and-triggers/connectors/web-protocols/rest-v2
+- Consumers / API Keys e Basic Auth: https://docs.digibee.com/documentation/developer-guide/pt-br/platform-administration/settings/api-keys-consumers
+
 ---
 
 ## Fluxograma de Integracao (Mermaid)
@@ -77,6 +82,11 @@ flowchart LR
 - Endpoint de webhook exposto para Nina (ou middleware de canais).
 - Endpoint de envio de mensagem para retorno ao usuario.
 
+### Documentacao oficial
+- WhatsApp Cloud API (visao geral): https://developers.facebook.com/docs/whatsapp/cloud-api/
+- WhatsApp Messages API (envio de mensagens): https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
+- WhatsApp Service Messages (janela de atendimento e formato de payload): https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages/
+
 ### Autenticacao
 - Token de acesso da API do provedor WhatsApp.
 - Validacao de assinatura de webhook.
@@ -102,6 +112,13 @@ flowchart LR
 - API de inferencia da **OpenAI** como provider LLM (ex.: Responses API/Chat Completions).
 - Endpoint de chamada para o Digibee (sincrono ou assincrono).
 - Endpoint de callback para resposta consolidada, quando aplicavel.
+
+### Documentacao oficial
+- Microsoft Copilot Studio (documentacao principal): https://learn.microsoft.com/en-us/microsoft-copilot-studio/
+- Copilot Studio - estrategias de integracao: https://learn.microsoft.com/en-us/microsoft-copilot-studio/guidance/integrations
+- Copilot Studio - autenticacao: https://learn.microsoft.com/en-us/microsoft-copilot-studio/configuration-end-user-authentication
+- OpenAI API Reference (endpoint e schemas): https://developers.openai.com/api/reference/
+- OpenAI Responses API (criacao de resposta): https://developers.openai.com/api/reference/resources/responses/methods/create/
 
 ### Autenticacao
 - OAuth2/JWT entre Nina e servicos corporativos.
@@ -147,6 +164,10 @@ flowchart LR
 - Lecom API para criacao/atualizacao de cadastro.
 - Conectores HTTP/API do Digibee.
 - Sincronizacao complementar com TOTVS/Datasul.
+
+### Documentacao oficial
+- Lecom Open API - introducao: https://lecomsa.readme.io/reference/getting-started-with-your-api
+- Lecom Open API v6: https://lecomsa.readme.io/v6.0/reference/getting-started-with-your-api
 
 ### Autenticacao
 - OAuth2 Client Credentials (preferencial).
@@ -197,6 +218,11 @@ flowchart LR
 - Servicos de cadastro de clientes.
 - Servicos de pedido de venda e faturamento.
 - Servicos de consulta financeira.
+
+### Documentacao oficial
+- TOTVS Developers - API Reference: https://api.totvs.com.br/referencelist
+- TOTVS Datasul - desenvolvimento de APIs (TDN): https://tdn.totvs.com/display/public/LDT/Desenvolvimento+de+APIs+para+o+produto+Datasul
+- TOTVS Central - guia de integracao REST no Datasul: https://centraldeatendimento.totvs.com/hc/pt-br/articles/16461753523863-Framework-Linha-Datasul-FRW-Documenta%C3%A7%C3%A3o-para-Integra%C3%A7%C3%A3o-e-utiliza%C3%A7%C3%A3o-de-APIs-REST
 
 ### Autenticacao
 - Token de aplicacao, usuario tecnico ou gateway interno.
