@@ -1,256 +1,323 @@
-# Integração Digibee com Sistemas Corporativos
+# Integracao Digibee com Sistemas Corporativos
 
-Este documento descreve uma proposta técnica de integração do **Digibee** com os sistemas:
+Este documento descreve a arquitetura de integracao entre o **Digibee** e os sistemas:
 
+- **WhatsApp** (canal de entrada do usuario)
+- **Nina (Microsoft Copilot)** (bot com IA para interpretacao e orquestracao)
 - **Lecom** (cadastro de clientes)
-- **Nina / ITSM** (gestão de tickets e chamados)
-- **Portal de Pedidos** (entrada e acompanhamento de pedidos)
+- **Portal de Pedidos** (input e acompanhamento de pedidos)
 - **TOTVS / Datasul** (ERP Brasil)
-- **Tarken** (solicitação e análise de limite de crédito)
-- **LoogAI** (acompanhamento de data de entrega)
+- **Tarken** (solicitacao e analise de limite de credito)
+- **LoogAI** (acompanhamento da data de entrega)
+- **Nina / ITSM** (gestao de tickets e chamados)
+
+## Principio arquitetural obrigatorio
+
+**Toda requisicao de negocio deve passar pelo Digibee**, que e o hub oficial de integracao, governanca, seguranca, observabilidade e orquestracao.
 
 ---
 
-## Fluxograma de Integração (Mermaid)
+## Fluxograma de Integracao (Mermaid)
 
 ```mermaid
 flowchart LR
-    subgraph Canais[Camadas de Entrada e Consumo]
-      PORTAL[Portal de Pedidos]
-      NINA[Nina / ITSM]
-      LECOM[Lecom]
-    end
+    USER[Usuario]
+    WPP[WhatsApp]
+    NINA[Nina - Microsoft Copilot]
+    DIGI[Digibee]
 
-    subgraph HUB[Hub de Integração]
-      DIGI[Digibee]
-    end
+    LECOM[Lecom]
+    PORTAL[Portal de Pedidos]
+    TOTVS[TOTVS / Datasul]
+    TARKEN[Tarken]
+    LOOGAI[LoogAI]
+    ITSM[Nina / ITSM]
 
-    subgraph Sistemas[Sistemas de Negócio]
-      TOTVS[TOTVS / Datasul]
-      TARKEN[Tarken]
-      LOOGAI[LoogAI]
-    end
+    USER -->|Mensagem em linguagem natural| WPP
+    WPP -->|Webhook de entrada| NINA
 
-    PORTAL -->|Pedidos / Consulta de status| DIGI
-    NINA -->|Abertura e atualização de chamados| DIGI
-    LECOM -->|Cadastro e atualização de clientes| DIGI
+    NINA -->|Intencao + entidades extraidas| DIGI
 
-    DIGI -->|Criação/alteração de cliente e pedido| TOTVS
-    TOTVS -->|Saldo, faturamento, status do pedido| DIGI
+    DIGI -->|Consulta/atualizacao de cadastro| LECOM
+    DIGI -->|Criacao/consulta de pedido| PORTAL
+    DIGI -->|ERP: cliente/pedido/financeiro| TOTVS
+    DIGI -->|Analise de credito| TARKEN
+    DIGI -->|Tracking e ETA| LOOGAI
+    DIGI -->|Abertura/atualizacao de chamado| ITSM
 
-    DIGI -->|Solicitação de análise de crédito| TARKEN
-    TARKEN -->|Score, limite aprovado, parecer| DIGI
+    LECOM --> DIGI
+    PORTAL --> DIGI
+    TOTVS --> DIGI
+    TARKEN --> DIGI
+    LOOGAI --> DIGI
+    ITSM --> DIGI
 
-    DIGI -->|Consulta logística por pedido| LOOGAI
-    LOOGAI -->|Previsão e eventos de entrega| DIGI
-
-    DIGI -->|Retorno consolidado| PORTAL
-    DIGI -->|Atualização de tickets e incidentes| NINA
-    DIGI -->|Confirmação cadastral| LECOM
+    DIGI -->|Payload consolidado| NINA
+    NINA -->|Resposta em linguagem natural| WPP
+    WPP -->|Mensagem final| USER
 ```
 
 ---
 
-## 1) Lecom — Cadastro de Clientes
+## 1) WhatsApp - Canal Conversacional
 
-### Módulos no Digibee
-- **Pipeline de Cadastro de Clientes**
-- **Transformação de payload** (normalização de CPF/CNPJ, endereço, contatos)
-- **Orquestração de validações** (duplicidade, campos obrigatórios, regras fiscais)
+### Modulos na arquitetura
+- **Webhook de entrada** para receber mensagens do usuario.
+- **Camada de entrega** para envio da resposta final.
+- **Correlacao de conversa** para manter contexto por numero/sessao.
 
 ### APIs envolvidas
-- **Lecom API**: endpoints de criação/atualização de cadastro.
-- **Digibee API Gateway / HTTP Connector**: consumo e publicação dos serviços de integração.
-- Integração complementar com **TOTVS/Datasul** para persistência de cadastro mestre.
+- API oficial do provedor WhatsApp (Cloud API/BSP).
+- Endpoint de webhook exposto para Nina (ou middleware de canais).
+- Endpoint de envio de mensagem para retorno ao usuario.
 
-### Autenticação
-- Preferencialmente **OAuth2 Client Credentials** para APIs REST.
-- Quando não disponível, **API Key** + controle de IP/rede corporativa.
-- Assinatura de requisição com **TLS** ponta a ponta.
+### Autenticacao
+- Token de acesso da API do provedor WhatsApp.
+- Validacao de assinatura de webhook.
+- TLS obrigatorio.
 
-### Informações trafegadas
-- Dados cadastrais: razão social, nome fantasia, CPF/CNPJ, inscrição estadual.
-- Endereços (cobrança/entrega), contatos, e-mails e telefones.
-- Parâmetros comerciais: condição de pagamento, segmento, vendedor responsável.
-- Status de sincronização e protocolo de processamento.
+### Informacoes trafegadas
+- Texto da mensagem do usuario.
+- Metadados de conversa (numero, id da conversa, timestamp).
+- Resposta final gerada pela Nina com dados consolidados do Digibee.
 
 ---
 
-## 2) Nina / ITSM — Gestão de Tickets e Chamados
+## 2) Nina (Microsoft Copilot) - Orquestracao com IA
 
-### Módulos no Digibee
-- **Pipeline de Suporte ITSM**
-- **Roteamento por tipo de ocorrência** (pedido, crédito, cadastro, logística)
-- **Enriquecimento de contexto** (consulta em TOTVS, Tarken e LoogAI)
+### Modulos na arquitetura
+- **NLU/LLM** para interpretar intencao e extrair entidades.
+- **Planner de acoes** para decidir quais consultas executar.
+- **Compositor de resposta** para gerar retorno em linguagem natural.
+- **Guardrails** para mascarar dados sensiveis e aplicar politica de uso.
 
 ### APIs envolvidas
-- **ITSM REST API** para abertura, atualização e encerramento de chamados.
-- **Webhooks de eventos** para retorno automático ao Nina.
-- API de consulta de status das integrações no Digibee para diagnóstico.
+- Endpoint de inferencia da Nina/Copilot.
+- Endpoint de chamada para o Digibee (sincrono ou assincrono).
+- Endpoint de callback para resposta consolidada, quando aplicavel.
 
-### Autenticação
-- **Bearer Token (OAuth2/JWT)** para operações de ticket.
-- Chave técnica por integração para webhooks de retorno.
-- Controle de escopo por perfil (abertura, leitura, atualização).
+### Autenticacao
+- OAuth2/JWT entre Nina e servicos corporativos.
+- Chave tecnica para chamadas ao Digibee.
+- Controle de escopo por acao (consulta, atualizacao, abertura de chamado).
 
-### Informações trafegadas
-- ID do ticket, categoria, criticidade, SLA e responsável.
-- Dados de pedido/cliente associados ao incidente.
-- Mensagens de erro técnico e funcional do fluxo de integração.
-- Histórico de tratativas e mudanças de status do chamado.
+### Informacoes trafegadas
+- Intencao detectada (ex.: "consultar pedido", "solicitar limite", "abrir chamado").
+- Entidades extraidas (CNPJ, numero do pedido, codigo do cliente, ticket).
+- Resultado consolidado retornado pelo Digibee.
+- Resposta textual final para o usuario no WhatsApp.
 
 ---
 
-## 3) Portal de Pedidos — Input e Acompanhamento de Pedidos
+## 3) Lecom - Cadastro de Clientes
 
-> Observação: como a documentação detalhada do Portal é limitada, a definição abaixo considera um padrão comum de integração REST/JSON em ambiente corporativo.
-
-### Módulos no Digibee
-- **Pipeline de Entrada de Pedidos**
-- **Validação comercial e fiscal**
-- **Orquestração entre ERP, crédito e logística**
+### Modulos no Digibee
+- **Pipeline de Cadastro de Clientes**.
+- Transformacao de payload (normalizacao de CPF/CNPJ, endereco, contatos).
+- Validacoes de consistencia cadastral e duplicidade.
 
 ### APIs envolvidas
-- Endpoint de **recepção de pedidos** (criação e alteração).
-- Endpoint de **consulta de status** (em processamento, aprovado, faturado, entregue).
-- Integrações a jusante com TOTVS, Tarken e LoogAI para compor o retorno.
+- Lecom API para criacao/atualizacao de cadastro.
+- Conectores HTTP/API do Digibee.
+- Sincronizacao complementar com TOTVS/Datasul.
 
-### Autenticação
-- **JWT** emitido por SSO corporativo ou **OAuth2**.
-- Opcionalmente **mTLS** para comunicação serviço-a-serviço interna.
-- Rate limit por consumidor para evitar sobrecarga.
+### Autenticacao
+- OAuth2 Client Credentials (preferencial).
+- API Key quando necessario.
+- TLS ponta a ponta.
 
-### Informações trafegadas
-- Cabeçalho do pedido: número, filial, cliente, condição de pagamento.
-- Itens: SKU, quantidade, preço, desconto, impostos.
-- Resultado de crédito e disponibilidade de faturamento.
-- Status logístico e previsão de entrega.
+### Informacoes trafegadas
+- Dados cadastrais e fiscais.
+- Enderecos, contatos e parametros comerciais.
+- Status de integracao e protocolo de processamento.
 
 ---
 
-## 4) TOTVS / Datasul — ERP Brasil
+## 4) Portal de Pedidos - Input e Acompanhamento
 
-### Módulos no Digibee
-- **Pipeline ERP Core**
-- **Conector ERP** para rotinas de clientes, pedidos e faturamento.
-- **Tratamento de erros de integração** com retentativa e fila de reprocesso.
+> Observacao: como o Portal de Pedidos e uma ferramenta interna com documentacao limitada, foi adotado um padrao de integracao REST/JSON.
+
+### Modulos no Digibee
+- **Pipeline de Entrada de Pedidos**.
+- Validacao comercial/fiscal.
+- Orquestracao com ERP, credito e logistica.
 
 ### APIs envolvidas
-- APIs/serviços de **cadastro de clientes**.
-- APIs/serviços de **pedido de venda** e **faturamento**.
-- APIs/serviços de **consulta financeira** (títulos, saldo, bloqueios).
+- Endpoint de criacao/alteracao de pedido.
+- Endpoint de consulta de status de pedido.
+- Integracao com TOTVS, Tarken e LoogAI para enriquecimento.
 
-### Autenticação
-- Conforme padrão do ambiente ERP: **token de aplicação**, usuário técnico ou gateway interno.
-- Transporte seguro via **HTTPS/TLS**.
-- Auditoria de chamadas por correlação de request-id.
+### Autenticacao
+- JWT corporativo ou OAuth2.
+- mTLS opcional para trafego interno.
+- Rate limit por consumidor.
 
-### Informações trafegadas
-- Mestre de clientes e suas atualizações.
-- Pedidos de venda e retorno de status (digitado, liberado, faturado, cancelado).
-- Dados financeiros para suporte à decisão de crédito.
-- Eventos de integração para rastreabilidade operacional.
+### Informacoes trafegadas
+- Cabecalho do pedido e itens.
+- Condicao comercial, impostos e descontos.
+- Status operacional, financeiro e logistico.
 
 ---
 
-## 5) Tarken — Solicitação e Análise de Limite de Crédito
+## 5) TOTVS / Datasul - ERP Brasil
 
-### Módulos no Digibee
-- **Pipeline de Crédito**
-- **Montagem de dossiê** (dados cadastrais + financeiros + histórico)
-- **Política de fallback** para análise manual em caso de indisponibilidade
+### Modulos no Digibee
+- **Pipeline ERP Core**.
+- Conector ERP para clientes, pedidos e faturamento.
+- Retentativas, fila de reprocesso e rastreabilidade.
 
 ### APIs envolvidas
-- Endpoint para **solicitar análise de crédito**.
-- Endpoint para **consultar resultado da análise**.
-- Endpoint para **revalidação de limite** em alterações de pedido.
+- Servicos de cadastro de clientes.
+- Servicos de pedido de venda e faturamento.
+- Servicos de consulta financeira.
 
-### Autenticação
-- **OAuth2 Client Credentials** (preferencial) ou API Key assinada.
-- Criptografia em trânsito e mascaramento de dados sensíveis em logs.
-- Controle de timeout e circuit breaker no Digibee.
+### Autenticacao
+- Token de aplicacao, usuario tecnico ou gateway interno.
+- HTTPS/TLS obrigatorio.
+- Correlation/request-id para auditoria.
 
-### Informações trafegadas
-- Identificação do cliente e documentos.
-- Valor solicitado, prazo, tipo de operação e risco.
-- Resultado: score, limite aprovado, validade, justificativa e restrições.
-- Código de retorno para continuidade do fluxo de pedido.
+### Informacoes trafegadas
+- Cadastro mestre de clientes.
+- Status de pedido (digitado, liberado, faturado, cancelado).
+- Titulos, saldo e bloqueios financeiros.
 
 ---
 
-## 6) LoogAI — Acompanhamento da Data de Entrega
+## 6) Tarken - Solicitacao e Analise de Limite de Credito
 
-### Módulos no Digibee
-- **Pipeline Logístico**
-- **Consulta de tracking por pedido/nota**
-- **Normalização de eventos de entrega** para consumo no Portal e ITSM
+### Modulos no Digibee
+- **Pipeline de Credito**.
+- Montagem de dossie de analise.
+- Fallback para analise manual em contingencia.
 
 ### APIs envolvidas
-- Endpoint de **tracking** por pedido, NF ou código logístico.
-- Endpoint de **eventos logísticos** (coletado, em trânsito, entregue, ocorrência).
-- Webhook de atualização de ETA (Estimated Time of Arrival), quando disponível.
+- API de solicitacao de analise de credito.
+- API de consulta de resultado.
+- API de revalidacao de limite.
 
-### Autenticação
-- Token de API com renovação periódica.
-- Assinatura/verificação de webhooks para garantir integridade dos eventos.
-- TLS obrigatório nas integrações síncronas e assíncronas.
+### Autenticacao
+- OAuth2 Client Credentials ou API Key assinada.
+- TLS e mascaramento de dados sensiveis em logs.
+- Timeout/circuit breaker para resiliencia.
 
-### Informações trafegadas
-- Status atual de entrega e timestamp de cada evento.
-- Data prevista de entrega (ETA) e janelas logísticas.
-- Exceções de rota, tentativa de entrega e motivo de atraso.
-- Comprovante de entrega (quando aplicável).
+### Informacoes trafegadas
+- Documentos e identificacao do cliente.
+- Valor solicitado, prazo e risco.
+- Score, limite aprovado, validade e justificativa.
 
 ---
 
-## Compilado Final — Como o Digibee Consolida e Retorna as Informações
+## 7) LoogAI - Acompanhamento da Data de Entrega
 
-O **Digibee** atua como camada central de integração e orquestração, realizando:
+### Modulos no Digibee
+- **Pipeline Logistico**.
+- Consulta de tracking por pedido/NF.
+- Normalizacao de eventos e ETA.
 
-1. **Recepção do evento inicial**  
-   Entrada via Portal de Pedidos, Lecom ou Nina/ITSM.
+### APIs envolvidas
+- API de tracking logistico.
+- API/eventos de entrega (coletado, em transito, entregue, ocorrencia).
+- Webhook de atualizacao de ETA (quando disponivel).
 
-2. **Validação e enriquecimento**  
-   Normaliza payloads e consulta sistemas mestres (principalmente TOTVS/Datasul).
+### Autenticacao
+- Token de API com renovacao periodica.
+- Validacao de assinatura de webhook.
+- TLS obrigatorio.
 
-3. **Processamento paralelo de domínios**  
-   - Crédito: consulta Tarken  
-   - Logística: consulta LoogAI  
-   - ERP: atualização e leitura de status no TOTVS/Datasul
+### Informacoes trafegadas
+- Status atual de entrega e historico de eventos.
+- Data prevista de entrega (ETA).
+- Ocorrencias e justificativas de atraso.
 
-4. **Consolidação de resposta canônica**  
-   Monta um objeto único com:
-   - dados cadastrais/clientes,
-   - dados comerciais do pedido,
-   - resultado de crédito,
-   - status financeiro/ERP,
-   - acompanhamento logístico.
+---
 
-5. **Retorno aos sistemas consumidores**  
-   Publica a resposta consolidada para:
-   - **Portal de Pedidos** (visão operacional de ponta a ponta),
-   - **Nina / ITSM** (contexto para suporte e SLA),
-   - **Lecom** (confirmações de cadastro e consistência).
+## 8) Nina / ITSM - Gestao de Tickets e Chamados
+
+### Modulos no Digibee
+- **Pipeline de Suporte ITSM**.
+- Roteamento por tipo de incidente.
+- Enriquecimento com dados de pedido, credito e logistica.
+
+### APIs envolvidas
+- ITSM REST API para abertura/atualizacao/encerramento.
+- Webhooks para notificacoes de mudanca de status.
+- Endpoint de diagnostico de integracoes.
+
+### Autenticacao
+- Bearer Token (OAuth2/JWT).
+- Chave tecnica para webhooks.
+- Escopos por perfil de operacao.
+
+### Informacoes trafegadas
+- ID do ticket, categoria, prioridade, SLA, responsavel.
+- Evidencias tecnicas do erro e contexto de negocio.
+- Historico de tratativas e status.
+
+---
+
+## Fluxo Conversacional com IA (WhatsApp + Nina + Digibee)
+
+1. **Usuario envia mensagem em linguagem natural no WhatsApp**  
+   Exemplo: "Qual a previsao de entrega do pedido 12345 e meu limite de credito?"
+
+2. **Nina (Copilot) interpreta a mensagem**  
+   Extrai intencao e entidades (pedido, cliente, cnpj, etc.).
+
+3. **Nina chama o Digibee como camada unica de integracao**  
+   A Nina nao consulta sistemas de negocio diretamente.
+
+4. **Digibee orquestra as chamadas necessarias**  
+   - TOTVS/Datasul para status ERP/pedido  
+   - Tarken para limite de credito  
+   - LoogAI para previsao de entrega  
+   - Lecom para dados cadastrais (se necessario)  
+   - ITSM para abertura/consulta de chamado (se solicitado)
+
+5. **Digibee consolida os resultados**  
+   Normaliza campos, trata erros e devolve payload canonico para Nina.
+
+6. **Nina gera resposta final com IA**  
+   Cria texto claro e contextualizado para o usuario.
+
+7. **WhatsApp entrega a resposta ao usuario**  
+   Inclui, quando necessario, instrucoes de proximo passo.
+
+---
+
+## Compilado Final - Como o Digibee Retorna as Informacoes
+
+O Digibee recebe a solicitacao da Nina, executa integracoes com os sistemas necessarios e devolve um **objeto consolidado** para a Nina. Esse retorno pode conter:
+
+- `cliente`: dados cadastrais e status no ERP.
+- `pedido`: status comercial e financeiro.
+- `credito`: score e limite aprovado na Tarken.
+- `logistica`: status de transporte e ETA da LoogAI.
+- `suporte`: ticket ITSM relacionado, quando houver.
+- `integrationStatus`: sucesso parcial/total e mensagens de erro tratadas.
+
+A Nina usa esse objeto para produzir a resposta em linguagem natural no WhatsApp, mantendo a experiencia conversacional, sem expor complexidade tecnica ao usuario final.
 
 ### Exemplo de payload consolidado (referencial)
 
 ```json
 {
-  "correlationId": "9d8f8e8b-0f00-4f15-a0d1-5ce2f7d5e2f9",
+  "correlationId": "f0d6a3f3-66f8-4e14-bdf5-0ccdb7dbd77e",
+  "channel": "whatsapp",
+  "assistant": "nina-copilot",
   "cliente": {
     "idErp": "CLI12345",
     "cnpj": "00.000.000/0001-00",
     "statusCadastro": "ATIVO"
   },
   "pedido": {
-    "numero": "PED-2026-001245",
+    "numero": "12345",
     "statusErp": "LIBERADO",
     "valorTotal": 15230.55
   },
   "credito": {
     "provedor": "Tarken",
     "status": "APROVADO",
-    "limiteAprovado": 50000.00,
+    "limiteAprovado": 50000.0,
     "score": 782
   },
   "logistica": {
@@ -261,6 +328,10 @@ O **Digibee** atua como camada central de integração e orquestração, realiza
   "suporte": {
     "ticketId": "INC-88421",
     "status": "EM_ANDAMENTO"
+  },
+  "integrationStatus": {
+    "overall": "SUCCESS",
+    "warnings": []
   }
 }
 ```
