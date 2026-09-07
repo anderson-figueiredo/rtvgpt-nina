@@ -311,6 +311,131 @@ flowchart LR
 
 ---
 
+## Exemplos de Payload (Nina <-> LLM)
+
+### 1) Nina -> LLM (OpenAI) - Interpretacao da mensagem
+
+```json
+{
+  "provider": "openai",
+  "operation": "intent_and_entity_extraction",
+  "correlationId": "corr-20260907-0001",
+  "channel": "whatsapp",
+  "locale": "pt-BR",
+  "input": {
+    "userId": "5511999999999",
+    "messageId": "wamid.HBgL...",
+    "text": "Qual a previsao de entrega do pedido 12345 e meu limite de credito?"
+  },
+  "context": {
+    "conversationState": {
+      "lastIntent": "order_tracking",
+      "openTicket": false
+    },
+    "allowedIntents": [
+      "order_status",
+      "delivery_eta",
+      "credit_limit",
+      "customer_registration",
+      "open_ticket"
+    ]
+  },
+  "responseFormat": {
+    "type": "json_schema",
+    "schemaName": "nina_intent_v1"
+  }
+}
+```
+
+### 2) LLM -> Nina - Resultado da interpretacao
+
+```json
+{
+  "correlationId": "corr-20260907-0001",
+  "intent": "delivery_eta_and_credit_limit",
+  "confidence": 0.96,
+  "entities": {
+    "orderNumber": "12345",
+    "customerDocument": null,
+    "requestedTopics": [
+      "delivery_eta",
+      "credit_limit"
+    ]
+  },
+  "requiredSystems": [
+    "totvs_datasul",
+    "tarken",
+    "loogai"
+  ],
+  "digibeeRequest": {
+    "pipeline": "nina-whatsapp-orchestrator",
+    "action": "query_order_credit_delivery",
+    "input": {
+      "orderNumber": "12345"
+    }
+  }
+}
+```
+
+### 3) Nina -> LLM (OpenAI) - Composicao da resposta final
+
+```json
+{
+  "provider": "openai",
+  "operation": "response_composition",
+  "correlationId": "corr-20260907-0001",
+  "channel": "whatsapp",
+  "instructions": {
+    "tone": "profissional e objetivo",
+    "maxLength": 500,
+    "maskSensitiveData": true
+  },
+  "digibeeOutput": {
+    "pedido": {
+      "numero": "12345",
+      "statusErp": "LIBERADO"
+    },
+    "credito": {
+      "status": "APROVADO",
+      "limiteAprovado": 50000.0
+    },
+    "logistica": {
+      "statusEntrega": "EM_TRANSITO",
+      "previsaoEntrega": "2026-09-10"
+    }
+  },
+  "responseFormat": {
+    "type": "json_schema",
+    "schemaName": "nina_outbound_message_v1"
+  }
+}
+```
+
+### 4) LLM -> Nina - Mensagem final estruturada para envio no WhatsApp
+
+```json
+{
+  "correlationId": "corr-20260907-0001",
+  "message": {
+    "text": "Pedido 12345 esta liberado no ERP. Seu limite de credito foi aprovado em R$ 50.000,00. A entrega esta em transito com previsao para 10/09/2026.",
+    "quickReplies": [
+      "Ver detalhes do pedido",
+      "Abrir chamado"
+    ]
+  },
+  "metadata": {
+    "usedSources": [
+      "totvs_datasul",
+      "tarken",
+      "loogai"
+    ],
+    "containsSensitiveData": false
+  }
+}
+```
+
+---
+
 ## Compilado Final - Como o Digibee Retorna as Informacoes
 
 O Digibee recebe a solicitacao da Nina, executa integracoes com os sistemas necessarios e devolve um **objeto consolidado** para a Nina. Esse retorno pode conter:
