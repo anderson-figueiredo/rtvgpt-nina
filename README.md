@@ -5,7 +5,7 @@ TODOs:
 - [x] Adicionar fluxo de interação humana (via Teams) quando a nina não conseguir encontrar informações no sistema ou identificar algo de risco de segurança (fallback), com chamada específica
 - [x] Adicionar fluxo de criação de tickets no ITSM no webhook de envio de mensagem, também adicionar um fluxo atualizando o ticket quando a Nina (ou humano via Teams) responder essa mensagem
 - [ ] (adicionar no roadmap) Adicionar na integração do portal de pedidos o fluxo o usuário vai fazer o upload de um pdf ou uma foto de pedido e já é criado automaticamente no sistema. adicionar fallbacks para arquivos inválidos ou corrompidos e imagens não nítidas. IA extrai informações identifica se já tem pedido criado ou não e confirma com o usuário a criação.
-- [ ] Adicionar fluxo de preparação para visita. rtv manda mensagem tipo "vou visitar cliente tal amanhã". O sistema responde com: Para a preparação de uma visita, são importantes informações como a data da última visita, anotações e registros anteriores, além do histórico de pedidos do cliente.
+- [x] Adicionar fluxo de preparação para visita. RTV manda mensagem tipo "vou visitar cliente tal amanhã". O sistema responde com data da última visita, anotações e registros anteriores, histórico de pedidos e insights do cliente para o RTV.
 - [ ] Estudar riscos de integração entre esses sistemas
 - [ ] Validar quem é o rtv com 3 primeiros dígitos do cpf
 - [ ] Crira outro doc com os detalhes técnicos de integrações
@@ -65,7 +65,7 @@ flowchart LR
 
     DIGI -->|Consulta/atualizacao de cadastro| LECOM
     DIGI -->|Criacao/consulta de pedido| PORTAL
-    DIGI -->|ERP: cliente/pedido/financeiro| TOTVS
+    DIGI -->|ERP: cliente/pedido/financeiro/visitas| TOTVS
     DIGI -->|Analise de credito| TARKEN
     DIGI -->|Tracking e ETA| LOOGAI
     DIGI -->|Consulta/enriquecimento do chamado| ITSM
@@ -123,6 +123,7 @@ flowchart LR
 - Metadados de conversa (numero, id da conversa, `messageId`/`wamid`, timestamp).
 - `ticketId` ITSM correlacionado a sessao.
 - Resposta final gerada pela Nina (ou pelo agente humano no Teams) com dados consolidados do Digibee.
+- Briefing de preparacao para visita (ultima visita, anotacoes, historico de pedidos e insights).
 - Mensagem de encaminhamento humano ou resposta do agente no Teams (fallback).
 
 ---
@@ -131,7 +132,7 @@ flowchart LR
 
 ### Modulos na arquitetura
 - **NLU/LLM** para interpretar intencao e extrair entidades.
-- **Planner de acoes** para decidir quais consultas executar.
+- **Planner de acoes** para decidir quais consultas executar (incluindo `query_visit_preparation` para briefing de visita).
 - **Compositor de resposta** para gerar retorno em linguagem natural.
 - **Guardrails** para mascarar dados sensiveis, detectar risco de seguranca e aplicar politica de uso.
 - **Fallback humano** para escalonar ao Microsoft Teams quando nao houver dados ou houver risco de seguranca.
@@ -157,11 +158,11 @@ flowchart LR
 ### Autenticacao
 - OAuth2/JWT entre Nina e servicos corporativos.
 - Chave tecnica para chamadas ao Digibee.
-- Controle de escopo por acao (consulta, atualizacao, abertura de chamado, `escalate_to_human`).
+- Controle de escopo por acao (consulta, atualizacao, abertura de chamado, `query_visit_preparation`, `escalate_to_human`).
 
 ### Informacoes trafegadas
-- Intencao detectada (ex.: "consultar pedido", "solicitar limite", "abrir chamado", "escalate_to_human").
-- Entidades extraidas (CNPJ, numero do pedido, codigo do cliente, ticket).
+- Intencao detectada (ex.: "consultar pedido", "solicitar limite", "abrir chamado", "preparar visita", "escalate_to_human").
+- Entidades extraidas (CNPJ, numero do pedido, codigo/nome do cliente, data da visita, ticket).
 - Sinal de risco de seguranca e motivo do fallback (`INFORMATION_NOT_FOUND` ou `SECURITY_RISK`).
 - Resultado consolidado retornado pelo Digibee, incluindo `suporte.ticketId`.
 - Resposta textual final para o usuario no WhatsApp (automatica ou proveniente do agente humano).
@@ -174,6 +175,7 @@ flowchart LR
 2. **Nina -> LLM (OpenAI) - Interpretacao**
    - Envia prompt com contexto da conversa e politicas de seguranca.
    - Recebe `intent`, `entities`, `confidence`, `required_systems` e, quando aplicavel, `securityRisk`.
+   - Na intencao `visit_preparation`, extrai o cliente e resolve data relativa ("amanha", "segunda") para ISO (`America/Sao_Paulo`).
 
 3. **Nina -> Digibee - Orquestracao**
    - Envia payload estruturado com intencao, entidades e `ticketId`.
@@ -237,6 +239,7 @@ flowchart LR
 ### APIs envolvidas
 - Endpoint de criacao/alteracao de pedido.
 - Endpoint de consulta de status de pedido.
+- Endpoint de historico de pedidos por cliente (carteira do RTV, janela recente).
 - Integracao com TOTVS, Tarken e LoogAI para enriquecimento.
 
 ### Autenticacao
@@ -248,6 +251,7 @@ flowchart LR
 - Cabecalho do pedido e itens.
 - Condicao comercial, impostos e descontos.
 - Status operacional, financeiro e logistico.
+- Historico recente de pedidos do cliente (usado no briefing de visita).
 
 ---
 
@@ -255,13 +259,14 @@ flowchart LR
 
 ### Modulos no Digibee
 - **Pipeline ERP Core**.
-- Conector ERP para clientes, pedidos e faturamento.
+- Conector ERP para clientes, pedidos, faturamento e historico comercial de visitas.
 - Retentativas, fila de reprocesso e rastreabilidade.
 
 ### APIs envolvidas
 - Servicos de cadastro de clientes.
 - Servicos de pedido de venda e faturamento.
 - Servicos de consulta financeira.
+- Servicos de historico de visitas comerciais, anotacoes e registros do cliente (modulo comercial/SFA do Datasul, quando habilitado).
 
 ### Documentacao oficial
 - TOTVS Developers - API Reference: https://api.totvs.com.br/referencelist
@@ -277,6 +282,7 @@ flowchart LR
 - Cadastro mestre de clientes.
 - Status de pedido (digitado, liberado, faturado, cancelado).
 - Titulos, saldo e bloqueios financeiros.
+- Data da ultima visita, anotacoes e registros comerciais anteriores do cliente.
 
 ---
 
@@ -914,38 +920,504 @@ Quando `action=assign`, o ticket permanece `ESCALADO` e recebe work note de assu
 
 ---
 
+## 10) Preparacao para Visita do RTV
+
+Quando o RTV envia no WhatsApp uma mensagem do tipo **"vou visitar o cliente tal amanha"**, a Nina classifica a intencao `visit_preparation` e o Digibee monta um **briefing comercial** no mesmo chat. A resposta precisa ser util na rua: ultima visita, anotacoes, historico de pedidos e **insights do cliente** para orientar a conversa.
+
+Essa e uma consulta composta. A Nina **nao** chama TOTVS, Portal, Tarken ou LoogAI diretamente. A acao exclusiva no orquestrador e `query_visit_preparation`.
+
+### Frases de acionamento (exemplos)
+- "Vou visitar o cliente Agro Tal amanha"
+- "Me prepara para a visita na Cooperativa X hoje"
+- "Briefing do cliente CLI12345 para visita na segunda"
+- "Quero o dossie do cliente 00.000.000/0001-00, visito ele dia 15"
+
+### O que a resposta deve conter
+
+| Bloco | Origem | Conteudo para o RTV |
+|---|---|---|
+| Identificacao do cliente | Lecom + TOTVS | Nome, `idErp`, CNPJ mascarado, status cadastral, cidade |
+| Data da visita planejada | Entidade extraida pela LLM | Texto original ("amanha") resolvido para data ISO (`America/Sao_Paulo`) |
+| Ultima visita | TOTVS / Datasul (historico comercial) | Data, RTV da visita, objetivo, resultado |
+| Anotacoes e registros anteriores | TOTVS (observacoes da visita e do cadastro) | Ultimas anotacoes comerciais, pendencias combinadas, registros de campo |
+| Historico de pedidos | Portal de Pedidos + TOTVS | Pedidos recentes (cabecalho, valor, status, data) |
+| Insights do cliente | Digibee (regras sobre o payload consolidado) | Alertas, oportunidades, saude comercial e pontos de pauta sugeridos |
+| Contexto complementar | Tarken, LoogAI, ITSM | Limite/score, entregas em aberto ou com ocorrencia, tickets abertos do cliente |
+
+A Nina **nao inventa** insight. O compositor so verbaliza o que veio no bloco `insights` do Digibee.
+
+### Chamada da Nina
+
+```
+POST /v1/nina/orchestrator
+pipeline: nina-whatsapp-orchestrator
+action: query_visit_preparation
+```
+
+Essa acao **nao** reutiliza `query_order_credit_delivery`. Pedido unico e briefing de visita sao contratos diferentes: o briefing e por cliente, com janela de historico e motor de insights.
+
+| Campo | Descricao |
+|---|---|
+| `customerName` | Nome informado pelo RTV (busca textual) |
+| `customerDocument` | CNPJ/CPF quando informado |
+| `customerCode` | Codigo ERP (`idErp`) quando informado |
+| `visitDate` | Data planejada ja resolvida (ISO `YYYY-MM-DD`) |
+| `visitDateRaw` | Texto original ("amanha", "segunda", "dia 15") |
+| `rtvId` | Identidade do RTV da sessao (escopo da carteira) |
+| `ticketId` | Ticket ITSM da conversa, aberto no webhook de entrada |
+| `orderHistoryLimit` | Quantidade de pedidos recentes (padrao 8, maximo 15) |
+| `visitHistoryLimit` | Quantidade de visitas/anotacoes recentes (padrao 5) |
+
+### Modulos no Digibee
+- **Acao `query_visit_preparation`** no pipeline `nina-whatsapp-orchestrator`.
+- Resolucao do cliente na carteira do RTV (Lecom + TOTVS).
+- Consulta de historico de visitas e anotacoes no TOTVS/Datasul.
+- Consulta de historico de pedidos no Portal e no ERP.
+- Enriquecimento com credito (Tarken), logistica (LoogAI) e tickets abertos do cliente (ITSM).
+- **Motor de insights** (regras deterministas, sem LLM no Digibee): recencia, volume, mix, credito, atraso, gap de visita.
+- Desambiguacao quando o nome do cliente bater em mais de um registro da carteira.
+
+### APIs envolvidas
+- API Trigger do orquestrador: `POST /v1/nina/orchestrator` (acao `query_visit_preparation`).
+- Lecom Open API: busca cadastral por nome/CNPJ.
+- TOTVS/Datasul: cliente, visitas comerciais, anotacoes, pedidos e titulos.
+- Portal de Pedidos: historico recente por cliente.
+- Tarken: snapshot de limite/score (nao solicita analise nova neste fluxo).
+- LoogAI: pedidos em transito e ocorrencias do cliente.
+- ITSM: tickets abertos associados ao `idErp` (alem do ticket da conversa).
+
+### Documentacao oficial
+- Digibee API Trigger: https://docs.digibee.com/documentation/connectors-and-triggers/triggers/web-protocols/api
+- Digibee REST V2: https://docs.digibee.com/documentation/connectors-and-triggers/connectors/web-protocols/rest-v2
+- Lecom Open API v6: https://lecomsa.readme.io/v6.0/reference/getting-started-with-your-api
+- TOTVS Developers - API Reference: https://api.totvs.com.br/referencelist
+- TOTVS Datasul - desenvolvimento de APIs: https://tdn.totvs.com/display/public/LDT/Desenvolvimento+de+APIs+para+o+produto+Datasul
+- WhatsApp Messages API: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
+
+### Autenticacao
+- OAuth2/JWT da Nina para o orquestrador (escopo `query_visit_preparation`).
+- Credenciais tecnicas ja usadas nos conectores Lecom, TOTVS, Portal, Tarken, LoogAI e ITSM.
+- A consulta e **restrita a carteira do RTV autenticado** (`rtv_may_only_access_own_portfolio`). Pedido de cliente fora da carteira dispara fallback `SECURITY_RISK`, nao o briefing.
+
+### Informacoes trafegadas
+- Identificacao do cliente e da visita planejada.
+- Ultima visita, visitas anteriores resumidas, anotacoes e registros.
+- Historico recente de pedidos (numero, data, valor, status, principais itens).
+- Insights estruturados (alertas, oportunidades, pontos de pauta).
+- Snapshot de credito, logistica e suporte, quando disponivel.
+- `integrationStatus` com sucesso parcial (ex.: pedidos ok, visitas indisponiveis).
+
+### Regras de resolucao do cliente
+
+| Resultado da busca na carteira | Comportamento |
+|---|---|
+| 1 cliente | Segue o briefing |
+| 0 cliente | `integrationStatus.overall=NOT_FOUND`. Nina dispara `escalate_to_human` com `INFORMATION_NOT_FOUND` se nao houver dado utilizavel |
+| 2+ clientes | Retorna `disambiguation.required=true` com candidatos. Nina **nao** monta o briefing; pergunta qual cliente no WhatsApp |
+| Cliente fora da carteira do RTV | Nao devolve dado. Nina dispara `escalate_to_human` com `SECURITY_RISK` |
+
+A busca aceita nome parcial, CNPJ/CPF normalizado e codigo ERP. CNPJ tem prioridade sobre nome.
+
+### Motor de insights (Digibee, regras)
+
+O Digibee calcula `insights` a partir dos dados consolidados. Nao ha chamada a LLM dentro do pipeline.
+
+| Tipo | Quando gera | Exemplo de `code` |
+|---|---|---|
+| `alerta` | Titulo vencido, credito no limite, entrega com ocorrencia, cadastro bloqueado | `CREDIT_NEAR_LIMIT`, `OVERDUE_TITLES`, `DELIVERY_EXCEPTION`, `CUSTOMER_BLOCKED` |
+| `oportunidade` | Queda de volume vs periodo anterior, item recorrente ausente na janela recente, gap longo desde a ultima compra | `VOLUME_DROP`, `MISSING_RECURRING_SKU`, `PURCHASE_GAP` |
+| `contexto` | Recencia da ultima visita, ticket medio, mix dominante, pedidos em aberto | `VISIT_GAP`, `AVG_TICKET`, `PRODUCT_MIX`, `OPEN_ORDERS` |
+| `pauta` | Ponto objetivo para o RTV usar na visita, derivado dos itens acima | `TALKING_POINT` |
+
+Regras de recorte (referenciais):
+- Janela de pedidos: ultimos 180 dias (comparativo com os 180 dias anteriores).
+- Ultima visita: `diasDesdeUltimaVisita` em relacao a `visitDate`.
+- Credito: uso >= 80% do limite gera `CREDIT_NEAR_LIMIT`.
+- Visita: gap >= 45 dias gera `VISIT_GAP`.
+- Mix: top 3 familias/SKUs por valor no historico recente.
+- Maximo de 6 insights no payload (prioriza `alerta`, depois `oportunidade`, depois `contexto`/`pauta`).
+
+Se o modulo de visitas do TOTVS estiver indisponivel, o briefing **continua** com pedidos, credito, logistica e insights restantes. Isso e `PARTIAL_SUCCESS`, nao fallback humano automatico. O RTV recebe o que houver, com aviso claro de que a ultima visita nao foi localizada.
+
+Fallback humano (`INFORMATION_NOT_FOUND`) so ocorre quando:
+- o cliente nao foi resolvido; ou
+- nenhum bloco utilizavel voltou (sem cliente, sem pedidos, sem visitas, sem credito/logistica).
+
+### Fluxo da preparacao
+
+```mermaid
+flowchart TD
+    MSG["RTV: vou visitar o cliente tal amanha"] --> IN[Digibee inbound + ticket ITSM]
+    IN --> NINA[Nina interpreta com LLM]
+    NINA --> RISK{Risco de seguranca / fora da carteira?}
+    RISK -->|Sim| FB[POST /v1/nina/human-fallback]
+    RISK -->|Nao| ORCH["POST /v1/nina/orchestrator action=query_visit_preparation"]
+    ORCH --> RESOLVE{Cliente na carteira}
+    RESOLVE -->|0| FB2[INFORMATION_NOT_FOUND]
+    RESOLVE -->|2+| ASK[Nina pede desambiguacao no WhatsApp]
+    RESOLVE -->|1| PARA[Consultas em paralelo]
+    PARA --> TOTVS[TOTVS: visitas, anotacoes, pedidos, titulos]
+    PARA --> PORTAL[Portal: historico de pedidos]
+    PARA --> TARKEN[Tarken: snapshot de credito]
+    PARA --> LOOG[LoogAI: entregas / ocorrencias]
+    PARA --> ITSM[ITSM: tickets abertos do cliente]
+    TOTVS --> INS[Motor de insights]
+    PORTAL --> INS
+    TARKEN --> INS
+    LOOG --> INS
+    ITSM --> INS
+    INS --> OUT[Payload consolidado para a Nina]
+    OUT --> LLM[LLM compoe briefing WhatsApp]
+    LLM --> SEND[POST /v1/nina/messages/outbound]
+    ASK --> SEND
+    FB --> TEAMS[Teams]
+    FB2 --> TEAMS
+```
+
+```mermaid
+sequenceDiagram
+    participant RTV as RTV WhatsApp
+    participant D as Digibee
+    participant N as Nina
+    participant L as LLM
+    participant T as TOTVS
+    participant P as Portal
+    participant K as Tarken
+    participant G as LoogAI
+
+    RTV->>D: "Vou visitar o cliente Agro Tal amanha"
+    D->>N: Evento + ticketId
+    N->>L: intent_and_entity_extraction
+    L-->>N: visit_preparation + cliente + visitDate
+    N->>D: query_visit_preparation
+    par Carteira e dossie
+        D->>T: Cliente, visitas, anotacoes, pedidos
+        D->>P: Historico de pedidos
+        D->>K: Snapshot de credito
+        D->>G: Entregas em aberto
+    end
+    D->>D: Calcula insights
+    D-->>N: cliente + visita + historicoPedidos + insights
+    N->>L: response_composition (briefing)
+    L-->>N: Texto WhatsApp
+    N->>D: POST /v1/nina/messages/outbound
+    D->>RTV: Briefing no mesmo chat
+```
+
+### Contrato HTTP (Nina -> Digibee)
+
+```http
+POST /v1/nina/orchestrator
+Content-Type: application/json
+Authorization: Bearer {nina-jwt}
+X-Correlation-Id: corr-20260909-0200
+```
+
+```json
+{
+  "pipeline": "nina-whatsapp-orchestrator",
+  "action": "query_visit_preparation",
+  "correlationId": "corr-20260909-0200",
+  "channel": "whatsapp",
+  "ticketId": "INC-88421",
+  "input": {
+    "rtvId": "RTV-4412",
+    "customerName": "Agro Tal",
+    "customerDocument": null,
+    "customerCode": null,
+    "visitDate": "2026-09-10",
+    "visitDateRaw": "amanha",
+    "orderHistoryLimit": 8,
+    "visitHistoryLimit": 5
+  }
+}
+```
+
+### Payload consolidado do briefing (Digibee -> Nina)
+
+```json
+{
+  "correlationId": "corr-20260909-0200",
+  "channel": "whatsapp",
+  "assistant": "nina-copilot",
+  "action": "query_visit_preparation",
+  "cliente": {
+    "idErp": "CLI12345",
+    "nome": "Agro Tal Ltda",
+    "cnpj": "00.000.000/0001-00",
+    "statusCadastro": "ATIVO",
+    "cidade": "Ribeirao Preto",
+    "uf": "SP"
+  },
+  "visitaPlanejada": {
+    "data": "2026-09-10",
+    "dataOriginal": "amanha"
+  },
+  "visita": {
+    "ultimaVisita": {
+      "data": "2026-08-12",
+      "diasDesdeUltimaVisita": 29,
+      "rtv": "RTV-4412",
+      "objetivo": "Reposicao da linha de defensivos",
+      "resultado": "Pedido 11890 combinado; cliente pediu visita de acompanhamento"
+    },
+    "registrosAnteriores": [
+      {
+        "data": "2026-08-12",
+        "tipo": "VISITA",
+        "anotacao": "Cliente reclamou atraso da NF 7741. Combinado retorno em 30 dias com nova tabela."
+      },
+      {
+        "data": "2026-06-03",
+        "tipo": "VISITA",
+        "anotacao": "Interesse em aumentar volume da linha foliar se prazo for 28 dias."
+      },
+      {
+        "data": "2026-05-20",
+        "tipo": "OBSERVACAO_CADASTRO",
+        "anotacao": "Comprador: Joao Mendes. Melhor horario: manha."
+      }
+    ]
+  },
+  "historicoPedidos": {
+    "janelaDias": 180,
+    "quantidade": 4,
+    "valorTotalJanela": 86420.10,
+    "itens": [
+      {
+        "numero": "12345",
+        "data": "2026-09-01",
+        "valorTotal": 15230.55,
+        "statusErp": "LIBERADO",
+        "principaisItens": ["Defensivo A", "Foliar B"]
+      },
+      {
+        "numero": "11890",
+        "data": "2026-08-12",
+        "valorTotal": 22100.00,
+        "statusErp": "FATURADO",
+        "principaisItens": ["Defensivo A"]
+      },
+      {
+        "numero": "11002",
+        "data": "2026-07-02",
+        "valorTotal": 19800.00,
+        "statusErp": "FATURADO",
+        "principaisItens": ["Semente C"]
+      },
+      {
+        "numero": "10211",
+        "data": "2026-05-18",
+        "valorTotal": 29289.55,
+        "statusErp": "FATURADO",
+        "principaisItens": ["Defensivo A", "Foliar B"]
+      }
+    ]
+  },
+  "credito": {
+    "provedor": "Tarken",
+    "status": "APROVADO",
+    "limiteAprovado": 50000.0,
+    "limiteUtilizado": 41000.0,
+    "percentualUso": 82.0,
+    "score": 782
+  },
+  "logistica": {
+    "provedor": "LoogAI",
+    "pedidosEmAberto": [
+      {
+        "numero": "12345",
+        "statusEntrega": "EM_TRANSITO",
+        "previsaoEntrega": "2026-09-10",
+        "ocorrencia": null
+      }
+    ]
+  },
+  "suporte": {
+    "ticketId": "INC-88421",
+    "status": "EM_ANDAMENTO",
+    "ticketsAbertosCliente": []
+  },
+  "insights": {
+    "resumo": "Cliente ativo, com visita ha 29 dias e uso de credito em 82%. Volume recente concentrado em Defensivo A; Foliar B nao aparece no ultimo pedido.",
+    "itens": [
+      {
+        "tipo": "alerta",
+        "code": "CREDIT_NEAR_LIMIT",
+        "titulo": "Credito proximo do limite",
+        "detalhe": "Uso de 82% (R$ 41.000 de R$ 50.000). Evitar comprometer pedido grande sem checar Tarken."
+      },
+      {
+        "tipo": "contexto",
+        "code": "VISIT_GAP",
+        "titulo": "Ultima visita em 12/08/2026",
+        "detalhe": "29 dias desde a ultima visita. Havia combinado de retorno em 30 dias."
+      },
+      {
+        "tipo": "alerta",
+        "code": "OPEN_DELIVERY",
+        "titulo": "Pedido 12345 em transito",
+        "detalhe": "ETA 10/09/2026, no mesmo dia da visita. Confirmar recebimento e qualidade."
+      },
+      {
+        "tipo": "oportunidade",
+        "code": "MISSING_RECURRING_SKU",
+        "titulo": "Foliar B sumiu do ultimo pedido",
+        "detalhe": "Estava nos pedidos de mai/2026 e nao veio no 12345. Pauta de reposicao."
+      },
+      {
+        "tipo": "pauta",
+        "code": "TALKING_POINT",
+        "titulo": "Retomar prazo de 28 dias",
+        "detalhe": "Anotacao de 03/06: cliente aumenta foliar se prazo for 28 dias. Levar condicao atualizada."
+      }
+    ]
+  },
+  "disambiguation": {
+    "required": false,
+    "candidates": []
+  },
+  "humanFallback": {
+    "triggered": false
+  },
+  "integrationStatus": {
+    "overall": "SUCCESS",
+    "warnings": []
+  }
+}
+```
+
+### Desambiguacao (mais de um cliente)
+
+```json
+{
+  "correlationId": "corr-20260909-0201",
+  "action": "query_visit_preparation",
+  "cliente": null,
+  "disambiguation": {
+    "required": true,
+    "query": "Agro Tal",
+    "candidates": [
+      {
+        "idErp": "CLI12345",
+        "nome": "Agro Tal Ltda",
+        "cnpj": "00.000.000/0001-00",
+        "cidade": "Ribeirao Preto"
+      },
+      {
+        "idErp": "CLI67890",
+        "nome": "Agro Tal Comercio",
+        "cnpj": "11.111.111/0001-11",
+        "cidade": "Araraquara"
+      }
+    ]
+  },
+  "integrationStatus": {
+    "overall": "NEEDS_DISAMBIGUATION",
+    "warnings": [
+      "Mais de um cliente na carteira corresponde a 'Agro Tal'"
+    ]
+  }
+}
+```
+
+Nesse caso a Nina pergunta no WhatsApp qual cliente sera visitado (nome + cidade/CNPJ mascarado). A proxima mensagem do RTV reenvia `query_visit_preparation` ja com `customerCode`.
+
+### Sucesso parcial (visitas indisponiveis)
+
+Se o historico de visitas nao voltar do TOTVS, o Digibee ainda devolve pedidos e insights:
+
+```json
+{
+  "visita": {
+    "ultimaVisita": null,
+    "registrosAnteriores": []
+  },
+  "historicoPedidos": {
+    "janelaDias": 180,
+    "quantidade": 4
+  },
+  "insights": {
+    "resumo": "Sem historico de visita no ERP. Briefing montado com pedidos e credito.",
+    "itens": [
+      {
+        "tipo": "contexto",
+        "code": "VISIT_HISTORY_UNAVAILABLE",
+        "titulo": "Ultima visita nao localizada",
+        "detalhe": "Modulo comercial de visitas nao retornou registros. Use o historico de pedidos na pauta."
+      }
+    ]
+  },
+  "integrationStatus": {
+    "overall": "PARTIAL_SUCCESS",
+    "warnings": [
+      "Historico de visitas indisponivel no TOTVS/Datasul"
+    ]
+  }
+}
+```
+
+### Composicao da resposta no WhatsApp
+
+A operacao `response_composition` deste fluxo usa tom de **briefing de campo**: curto, em blocos, sem jargao de integracao. `maxLength` sobe para **2000** caracteres (o limite padrao de 500 e insuficiente para dossie de visita). Dados sensiveis (CNPJ completo, score interno) devem ser mascarados.
+
+Estrutura esperada da mensagem:
+1. Titulo com nome do cliente e data da visita.
+2. Ultima visita + anotacoes (ou aviso se nao houver).
+3. Pedidos recentes (3 a 5 linhas).
+4. Insights / pauta para o RTV (alertas primeiro).
+
+Quick replies sugeridos:
+- "Ver mais pedidos"
+- "Ver limite de credito"
+- "Detalhes da ultima visita"
+
+### Resiliencia
+- Consultas a TOTVS, Portal, Tarken, LoogAI e ITSM em paralelo, com timeout individual.
+- Falha de um sistema nao cancela o briefing se outro bloco for utilizavel (`PARTIAL_SUCCESS`).
+- Sem cliente resolvido e sem nenhum bloco: fallback humano `INFORMATION_NOT_FOUND`.
+- Cliente fora da carteira: fallback `SECURITY_RISK` (mensagem generica no WhatsApp).
+- Idempotencia por `correlationId` + `customerCode` + `visitDate`.
+- Mascaramento de CNPJ, limite detalhado e score em logs.
+
+---
+
 ## Fluxo Conversacional com IA (WhatsApp + Nina + Digibee + ITSM)
 
 1. **Usuario envia mensagem em linguagem natural no WhatsApp**  
-   Exemplo: "Qual a previsao de entrega do pedido 12345 e meu limite de credito?"
+   Exemplo: "Qual a previsao de entrega do pedido 12345 e meu limite de credito?"  
+   Outro exemplo (briefing de visita): "Vou visitar o cliente Agro Tal amanha"
 
 2. **O webhook de envio da mensagem chega no Digibee** (`POST /v1/nina/messages/inbound`)  
    Digibee valida a assinatura, cria ou correlaciona o ticket ITSM e so entao encaminha o evento para a Nina (com `ticketId`).
 
 3. **Nina (Copilot) chama a LLM (OpenAI) para interpretar a mensagem**  
-   Extrai intencao, entidades (pedido, cliente, cnpj, etc.), quais sistemas consultar e sinais de risco de seguranca.
+   Extrai intencao, entidades (pedido, cliente, cnpj, data da visita, etc.), quais sistemas consultar e sinais de risco de seguranca.
 
 4. **Se houver risco de seguranca, a Nina NAO chama o orquestrador**  
    Dispara a **chamada dedicada** `POST /v1/nina/human-fallback` com `reason=SECURITY_RISK` e o `ticketId` da conversa. O Digibee marca o ticket como `ESCALADO` e informa o usuario com mensagem generica.
 
 5. **Se nao houver risco, a Nina chama o Digibee como camada unica de integracao**  
-   Envia uma requisicao estruturada com os dados de entrada e o `ticketId`. Nao consulta sistemas diretamente.
+   Envia uma requisicao estruturada com os dados de entrada e o `ticketId`. Nao consulta sistemas diretamente.  
+   Intencao `visit_preparation` usa a acao `query_visit_preparation` (nao reutiliza `query_order_credit_delivery`).
 
 6. **Digibee orquestra as chamadas necessarias**  
-   - TOTVS/Datasul para status ERP/pedido  
+   - TOTVS/Datasul para status ERP/pedido, historico de visitas e anotacoes  
+   - Portal de Pedidos para historico recente de pedidos do cliente  
    - Tarken para limite de credito  
-   - LoogAI para previsao de entrega  
+   - LoogAI para previsao de entrega e ocorrencias  
    - Lecom para dados cadastrais (se necessario)  
    - ITSM ja foi acionado no webhook de entrada; aqui so consulta/enriquece o chamado se preciso
 
 7. **Digibee consolida os resultados**  
-   Normaliza campos, trata erros e devolve payload canonico para Nina (incluindo `suporte.ticketId`).
+   Normaliza campos, trata erros, calcula `insights` quando a acao for `query_visit_preparation` e devolve payload canonico para Nina (incluindo `suporte.ticketId`).
 
 8. **Se a informacao nao for encontrada, a Nina dispara o mesmo endpoint dedicado de fallback**  
-   `POST /v1/nina/human-fallback` com `reason=INFORMATION_NOT_FOUND` e o `ticketId`. O Digibee escala um humano no Teams, marca o ticket como `ESCALADO` e a Nina avisa o usuario no WhatsApp.
+   `POST /v1/nina/human-fallback` com `reason=INFORMATION_NOT_FOUND` e o `ticketId`. O Digibee escala um humano no Teams, marca o ticket como `ESCALADO` e a Nina avisa o usuario no WhatsApp.  
+   Em `visit_preparation`, nome ambiguo gera pergunta de desambiguacao (nao fallback). Historico de visita ausente com pedidos presentes resulta em `PARTIAL_SUCCESS`, nao fallback.
 
 9. **Se houver dados, a Nina chama novamente a LLM (OpenAI) para compor a resposta final**  
-   Usa o payload consolidado do Digibee para gerar texto claro e contextualizado.
+   Usa o payload consolidado do Digibee para gerar texto claro e contextualizado. No briefing de visita, o tom e de dossie de campo e os insights so podem repetir o bloco `insights`.
 
 10. **Nina envia a resposta para o Digibee** (`POST /v1/nina/messages/outbound`)  
     Digibee atualiza o ticket ITSM (comentario + status `AGUARDANDO_USUARIO`, `author=nina`) e so depois entrega no WhatsApp.
@@ -987,6 +1459,7 @@ Quando `action=assign`, o ticket permanece `ESCALADO` e recebe work note de assu
       "credit_limit",
       "customer_registration",
       "open_ticket",
+      "visit_preparation",
       "escalate_to_human"
     ],
     "securityPolicies": [
@@ -1030,6 +1503,50 @@ Quando `action=assign`, o ticket permanece `ESCALADO` e recebe work note de assu
     "action": "query_order_credit_delivery",
     "input": {
       "orderNumber": "12345",
+      "ticketId": "INC-88421"
+    }
+  }
+}
+```
+
+Exemplo de interpretacao de preparacao para visita:
+
+```json
+{
+  "correlationId": "corr-20260909-0200",
+  "intent": "visit_preparation",
+  "confidence": 0.97,
+  "entities": {
+    "customerName": "Agro Tal",
+    "customerDocument": null,
+    "customerCode": null,
+    "visitDate": "2026-09-10",
+    "visitDateRaw": "amanha",
+    "requestedTopics": [
+      "last_visit",
+      "visit_notes",
+      "order_history",
+      "customer_insights"
+    ]
+  },
+  "requiredSystems": [
+    "lecom",
+    "totvs_datasul",
+    "portal_pedidos",
+    "tarken",
+    "loogai"
+  ],
+  "securityRisk": {
+    "detected": false
+  },
+  "digibeeRequest": {
+    "pipeline": "nina-whatsapp-orchestrator",
+    "action": "query_visit_preparation",
+    "input": {
+      "rtvId": "RTV-4412",
+      "customerName": "Agro Tal",
+      "visitDate": "2026-09-10",
+      "visitDateRaw": "amanha",
       "ticketId": "INC-88421"
     }
   }
@@ -1214,6 +1731,147 @@ Esta chamada **nao** usa o pipeline `nina-whatsapp-orchestrator`. E o contrato e
 }
 ```
 
+### 9) Nina -> LLM (OpenAI) - Interpretacao de "vou visitar o cliente tal amanha"
+
+```json
+{
+  "provider": "openai",
+  "operation": "intent_and_entity_extraction",
+  "correlationId": "corr-20260909-0200",
+  "channel": "whatsapp",
+  "locale": "pt-BR",
+  "input": {
+    "userId": "5511999999999",
+    "messageId": "wamid.HBgL...",
+    "ticketId": "INC-88421",
+    "text": "Vou visitar o cliente Agro Tal amanha"
+  },
+  "context": {
+    "conversationState": {
+      "lastIntent": null,
+      "openTicket": true,
+      "ticketId": "INC-88421",
+      "rtvId": "RTV-4412"
+    },
+    "allowedIntents": [
+      "order_status",
+      "delivery_eta",
+      "credit_limit",
+      "customer_registration",
+      "open_ticket",
+      "visit_preparation",
+      "escalate_to_human"
+    ],
+    "securityPolicies": [
+      "rtv_may_only_access_own_portfolio",
+      "mask_sensitive_data",
+      "block_prompt_injection"
+    ]
+  },
+  "responseFormat": {
+    "type": "json_schema",
+    "schemaName": "nina_intent_v1"
+  }
+}
+```
+
+### 10) Nina -> LLM (OpenAI) - Composicao do briefing de visita
+
+O compositor recebe o payload de `query_visit_preparation` e deve gerar um dossie objetivo. Insights so podem ser os do bloco `insights`.
+
+```json
+{
+  "provider": "openai",
+  "operation": "response_composition",
+  "correlationId": "corr-20260909-0200",
+  "channel": "whatsapp",
+  "instructions": {
+    "tone": "briefing de campo, profissional e objetivo",
+    "maxLength": 2000,
+    "maskSensitiveData": true,
+    "structure": [
+      "titulo com cliente e data da visita",
+      "ultima visita e anotacoes",
+      "historico recente de pedidos",
+      "insights e pauta para o RTV"
+    ],
+    "doNotInventInsights": true
+  },
+  "digibeeOutput": {
+    "action": "query_visit_preparation",
+    "cliente": {
+      "idErp": "CLI12345",
+      "nome": "Agro Tal Ltda",
+      "statusCadastro": "ATIVO"
+    },
+    "visitaPlanejada": {
+      "data": "2026-09-10"
+    },
+    "visita": {
+      "ultimaVisita": {
+        "data": "2026-08-12",
+        "diasDesdeUltimaVisita": 29
+      }
+    },
+    "historicoPedidos": {
+      "quantidade": 4,
+      "valorTotalJanela": 86420.10
+    },
+    "insights": {
+      "resumo": "Cliente ativo, credito em 82% de uso, Foliar B ausente no ultimo pedido.",
+      "itens": [
+        {
+          "tipo": "alerta",
+          "code": "CREDIT_NEAR_LIMIT",
+          "titulo": "Credito proximo do limite"
+        },
+        {
+          "tipo": "pauta",
+          "code": "TALKING_POINT",
+          "titulo": "Retomar prazo de 28 dias para foliar"
+        }
+      ]
+    },
+    "suporte": {
+      "ticketId": "INC-88421",
+      "status": "EM_ANDAMENTO"
+    }
+  },
+  "responseFormat": {
+    "type": "json_schema",
+    "schemaName": "nina_outbound_message_v1"
+  }
+}
+```
+
+### 11) LLM -> Nina - Briefing estruturado para o WhatsApp
+
+```json
+{
+  "correlationId": "corr-20260909-0200",
+  "ticketId": "INC-88421",
+  "message": {
+    "text": "Preparacao de visita — Agro Tal Ltda (amanha, 10/09/2026)\n\nUltima visita: 12/08/2026 (ha 29 dias). Anotacao: reclamacao do atraso da NF 7741 e combinado de retorno em 30 dias. Comprador: Joao Mendes (manha).\n\nPedidos recentes:\n- 12345 (01/09) R$ 15.230,55 LIBERADO — Defensivo A, Foliar B\n- 11890 (12/08) R$ 22.100,00 FATURADO — Defensivo A\n- 11002 (02/07) R$ 19.800,00 FATURADO — Semente C\n\nInsights para a visita:\n- Credito em 82% do limite; evitar pedido grande sem checar Tarken.\n- Pedido 12345 chega no dia da visita (ETA 10/09) — confirmar recebimento.\n- Foliar B nao veio no ultimo pedido; retomar prazo de 28 dias combinado em junho.",
+    "quickReplies": [
+      "Ver mais pedidos",
+      "Ver limite de credito",
+      "Detalhes da ultima visita"
+    ]
+  },
+  "metadata": {
+    "usedSources": [
+      "lecom",
+      "totvs_datasul",
+      "portal_pedidos",
+      "tarken",
+      "loogai"
+    ],
+    "containsSensitiveData": false,
+    "intent": "visit_preparation"
+  }
+}
+```
+
 ---
 
 ## Compilado Final - Como o Digibee Retorna as Informacoes
@@ -1221,12 +1879,17 @@ Esta chamada **nao** usa o pipeline `nina-whatsapp-orchestrator`. E o contrato e
 O Digibee recebe a solicitacao da Nina, executa integracoes com os sistemas necessarios e devolve um **objeto consolidado** para a Nina. Esse retorno pode conter:
 
 - `cliente`: dados cadastrais e status no ERP.
-- `pedido`: status comercial e financeiro.
+- `pedido`: status comercial e financeiro (consulta pontual).
+- `visitaPlanejada`: data da visita informada pelo RTV.
+- `visita`: ultima visita, anotacoes e registros comerciais anteriores.
+- `historicoPedidos`: pedidos recentes do cliente (Portal + TOTVS).
+- `insights`: alertas, oportunidades e pauta de visita calculados pelo Digibee (a Nina nao inventa insight).
+- `disambiguation`: candidatos quando o nome do cliente for ambiguo na carteira do RTV.
 - `credito`: score e limite aprovado na Tarken.
 - `logistica`: status de transporte e ETA da LoogAI.
 - `suporte`: ticket ITSM da conversa (aberto no webhook de entrada e atualizado na resposta da Nina ou do humano).
 - `humanFallback`: protocolo do handoff humano via Teams, quando a Nina acionar `escalate_to_human`.
-- `integrationStatus`: sucesso parcial/total e mensagens de erro tratadas.
+- `integrationStatus`: sucesso parcial/total, desambiguacao e mensagens de erro tratadas.
 
 A Nina usa esse objeto para produzir a resposta em linguagem natural. O Digibee persiste essa resposta no ticket ITSM e entrega no WhatsApp, mantendo a experiencia conversacional sem expor complexidade tecnica ao usuario final.
 
@@ -1322,3 +1985,74 @@ Quando o Digibee conclui `nina-itsm-ticket-update`, o bloco `suporte` passa a re
 ```
 
 Resposta humana via Teams usa `lastReplyAuthor: "human"` e `lastReplySource: "teams"`.
+
+### Exemplo de payload consolidado de preparacao para visita
+
+Acao `query_visit_preparation`. A Nina usa este objeto para o briefing no WhatsApp (ultima visita, anotacoes, pedidos e insights). O exemplo completo do dossie esta na secao 10.
+
+```json
+{
+  "correlationId": "corr-20260909-0200",
+  "channel": "whatsapp",
+  "assistant": "nina-copilot",
+  "action": "query_visit_preparation",
+  "cliente": {
+    "idErp": "CLI12345",
+    "nome": "Agro Tal Ltda",
+    "cnpj": "00.000.000/0001-00",
+    "statusCadastro": "ATIVO"
+  },
+  "visitaPlanejada": {
+    "data": "2026-09-10",
+    "dataOriginal": "amanha"
+  },
+  "visita": {
+    "ultimaVisita": {
+      "data": "2026-08-12",
+      "diasDesdeUltimaVisita": 29,
+      "objetivo": "Reposicao da linha de defensivos"
+    },
+    "registrosAnteriores": [
+      {
+        "data": "2026-08-12",
+        "tipo": "VISITA",
+        "anotacao": "Cliente reclamou atraso da NF 7741. Combinado retorno em 30 dias."
+      }
+    ]
+  },
+  "historicoPedidos": {
+    "janelaDias": 180,
+    "quantidade": 4,
+    "valorTotalJanela": 86420.10
+  },
+  "insights": {
+    "resumo": "Cliente ativo, credito em 82% de uso, Foliar B ausente no ultimo pedido.",
+    "itens": [
+      {
+        "tipo": "alerta",
+        "code": "CREDIT_NEAR_LIMIT",
+        "titulo": "Credito proximo do limite"
+      },
+      {
+        "tipo": "pauta",
+        "code": "TALKING_POINT",
+        "titulo": "Retomar prazo de 28 dias para foliar"
+      }
+    ]
+  },
+  "suporte": {
+    "ticketId": "INC-88421",
+    "status": "EM_ANDAMENTO"
+  },
+  "disambiguation": {
+    "required": false
+  },
+  "humanFallback": {
+    "triggered": false
+  },
+  "integrationStatus": {
+    "overall": "SUCCESS",
+    "warnings": []
+  }
+}
+```
