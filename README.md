@@ -1189,7 +1189,7 @@ X-Correlation-Id: corr-20260909-0200
         "data": "2026-09-01",
         "valorTotal": 15230.55,
         "statusErp": "LIBERADO",
-        "principaisItens": ["Defensivo A", "Foliar B"]
+        "principaisItens": ["Defensivo A"]
       },
       {
         "numero": "11890",
@@ -1851,7 +1851,7 @@ O compositor recebe o payload de `query_visit_preparation` e deve gerar um dossi
   "correlationId": "corr-20260909-0200",
   "ticketId": "INC-88421",
   "message": {
-    "text": "Preparacao de visita — Agro Tal Ltda (amanha, 10/09/2026)\n\nUltima visita: 12/08/2026 (ha 29 dias). Anotacao: reclamacao do atraso da NF 7741 e combinado de retorno em 30 dias. Comprador: Joao Mendes (manha).\n\nPedidos recentes:\n- 12345 (01/09) R$ 15.230,55 LIBERADO — Defensivo A, Foliar B\n- 11890 (12/08) R$ 22.100,00 FATURADO — Defensivo A\n- 11002 (02/07) R$ 19.800,00 FATURADO — Semente C\n\nInsights para a visita:\n- Credito em 82% do limite; evitar pedido grande sem checar Tarken.\n- Pedido 12345 chega no dia da visita (ETA 10/09) — confirmar recebimento.\n- Foliar B nao veio no ultimo pedido; retomar prazo de 28 dias combinado em junho.",
+    "text": "Preparacao de visita — Agro Tal Ltda (amanha, 10/09/2026)\n\nUltima visita: 12/08/2026 (ha 29 dias). Anotacao: reclamacao do atraso da NF 7741 e combinado de retorno em 30 dias. Comprador: Joao Mendes (manha).\n\nPedidos recentes:\n- 12345 (01/09) R$ 15.230,55 LIBERADO — Defensivo A\n- 11890 (12/08) R$ 22.100,00 FATURADO — Defensivo A\n- 11002 (02/07) R$ 19.800,00 FATURADO — Semente C\n\nInsights para a visita:\n- Credito em 82% do limite; evitar pedido grande sem checar Tarken.\n- Pedido 12345 chega no dia da visita (ETA 10/09) — confirmar recebimento.\n- Foliar B nao veio no ultimo pedido; retomar prazo de 28 dias combinado em junho.",
     "quickReplies": [
       "Ver mais pedidos",
       "Ver limite de credito",
