@@ -8,7 +8,10 @@ TODOs:
 - [x] Adicionar fluxo de preparação para visita. RTV manda mensagem tipo "vou visitar cliente tal amanhã". O sistema responde com data da última visita, anotações e registros anteriores, histórico de pedidos e insights do cliente para o RTV.
 - [ ] Estudar riscos de integração entre esses sistemas
 - [ ] Validar quem é o rtv com 3 primeiros dígitos do cpf
-- [ ] Crira outro doc com os detalhes técnicos de integrações
+- [x] Criar outro doc com os detalhes técnicos de integrações
+
+Documento de apoio criado para este item:
+- `docs/detalhes-tecnicos-integracoes.md`
 
 
 Este documento descreve a arquitetura de integracao entre o **Digibee** e os sistemas:
