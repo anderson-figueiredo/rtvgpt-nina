@@ -6,21 +6,15 @@ TODOs:
 - [x] Adicionar fluxo de criação de tickets no ITSM no webhook de envio de mensagem, também adicionar um fluxo atualizando o ticket quando a Nina (ou humano via Teams) responder essa mensagem
 - [x] (adicionar no roadmap) Adicionar na integração do portal de pedidos o fluxo o usuário vai fazer o upload de um pdf ou uma foto de pedido e já é criado automaticamente no sistema. adicionar fallbacks para arquivos inválidos ou corrompidos e imagens não nítidas. IA extrai informações identifica se já tem pedido criado ou não e confirma com o usuário a criação.
 - [x] Adicionar fluxo de preparação para visita. RTV manda mensagem tipo "vou visitar cliente tal amanhã". O sistema responde com data da última visita, anotações e registros anteriores, histórico de pedidos e insights do cliente para o RTV.
-- [ ] Estudar riscos de integração entre esses sistemas
-- [x] Validar quem é o rtv com 3 primeiros dígitos do cpf
-- [ ] Crira outro doc com os detalhes técnicos de integrações
-
-Documento de apoio criado para este item:
-- `docs/validacao-rtv-cpf.md`
 - [x] Estudar riscos de integração entre esses sistemas
-- [ ] Validar quem é o rtv com 3 primeiros dígitos do cpf
-- [x] Criar outro doc com os detalhes técnicos de integrações
+- [x] Validar quem é o rtv com 3 primeiros dígitos do cpf
+- [x] Crira outro doc com os detalhes técnicos de integrações
 
 Documento de apoio criado para este item:
-- `docs/detalhes-tecnicos-integracoes.md`
-
-
-
+- `/docs`
+- [x] Estudar riscos de integração entre esses sistemas
+- [x] Validar quem é o rtv com 3 primeiros dígitos do cpf
+- [x] Criar outro doc com os detalhes técnicos de integrações
 
 Este documento descreve a arquitetura de integracao entre o **Digibee** e os sistemas:
 
@@ -80,7 +74,7 @@ flowchart LR
     DIGI -->|Analise de credito| TARKEN
     DIGI -->|Tracking e ETA| LOOGAI
     DIGI -->|Consulta/enriquecimento do chamado| ITSM
-    DIGI -->|Escalonamento humano (fallback)| TEAMS
+    DIGI -->|Escalonamento humano:fallback| TEAMS
 
     LECOM --> DIGI
     PORTAL --> DIGI
