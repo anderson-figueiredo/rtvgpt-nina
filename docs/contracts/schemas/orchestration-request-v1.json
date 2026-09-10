@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/orchestration-request-v1.json",
+  "title": "OrchestrationRequest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "operationId",
+    "traceId",
+    "conversationId",
+    "conversationVersion",
+    "eventId",
+    "intent",
+    "requestedTopics",
+    "entities",
+    "businessTimeZone"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "operationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "traceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "conversationVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "order_inquiry",
+        "visit_preparation",
+        "customer_registration",
+        "order_create",
+        "open_ticket"
+      ]
+    },
+    "requestedTopics": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "enum": [
+          "order_status",
+          "delivery_eta",
+          "credit_limit",
+          "last_visit",
+          "visit_notes",
+          "order_history",
+          "customer_insights"
+        ]
+      }
+    },
+    "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "orderNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "customerDocument": {
+          "type": "string",
+          "minLength": 11,
+          "maxLength": 14,
+          "pattern": "^[0-9]+$"
+        },
+        "customerCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "visitDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "visitDateRaw": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "businessTimeZone": {
+      "type": "string",
+      "const": "America/Sao_Paulo"
+    }
+  }
+}

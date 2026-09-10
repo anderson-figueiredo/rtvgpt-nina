@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/inbound-message-v1.json",
+  "title": "InboundMessage v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "causationId",
+    "conversationId",
+    "conversationSequence",
+    "conversationVersion",
+    "occurredAt",
+    "channel",
+    "messageId",
+    "ticketId",
+    "ticketLinkStatus",
+    "input"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "traceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "causationId": {
+      "type": ["string", "null"],
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "conversationSequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "conversationVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "channel": {
+      "const": "whatsapp"
+    },
+    "messageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "ticketId": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "ticketLinkStatus": {
+      "enum": ["PENDING", "LINKED", "UNAVAILABLE"]
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    }
+  }
+}

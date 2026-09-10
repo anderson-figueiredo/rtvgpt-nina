@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/handoff-event-v1.json",
+  "title": "HandoffEvent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "pipelineAction",
+    "handoffAction",
+    "handoffId",
+    "handoffEventId",
+    "handoffVersion",
+    "nonce",
+    "expiresAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "pipelineAction": {
+      "const": "process_handoff_event"
+    },
+    "handoffAction": {
+      "enum": ["assign", "reply", "close"]
+    },
+    "handoffId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "handoffEventId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "handoffVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 256
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "handoffAction": {
+            "const": "reply"
+          }
+        }
+      },
+      "then": {
+        "required": ["reply"]
+      },
+      "else": {
+        "not": {
+          "required": ["reply"]
+        }
+      }
+    }
+  ]
+}

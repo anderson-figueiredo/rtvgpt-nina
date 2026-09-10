@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0.0",
+  "outboundCommandId": "01J7OUTBOUND01",
+  "operationId": "whatsapp-send:01J7OUTBOUND01",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "eventId": "01J7RESPONSE01",
+  "causationId": "01J7EVENT01",
+  "conversationId": "01J7CONVERSATION",
+  "conversationVersion": 2,
+  "inReplyToMessageId": "wamid.HBgL.example",
+  "content": {
+    "text": "O pedido 12345 está em trânsito. Consultei os dados em 10/09/2026.",
+    "dataClasses": [
+      "COMMERCIAL_CONFIDENTIAL"
+    ]
+  }
+}

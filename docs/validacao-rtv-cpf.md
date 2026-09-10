@@ -1,61 +1,147 @@
-# Validacao de RTV com 3 primeiros digitos do CPF
+# Identidade e autenticação do RTV
 
-Este documento define a regra de validacao de identidade do RTV antes de qualquer consulta de negocio na Nina.
+> Os três primeiros dígitos do CPF não autenticam nem autorizam um RTV. Existem
+> apenas mil combinações, o dado pode ser conhecido e não prova posse do
+> telefone, identidade corporativa ou resistência a SIM swap.
 
-## Objetivo
+## Controle de identidade
 
-Garantir que o usuario autenticado na sessao corresponde ao `rtvId` esperado, reduzindo risco de acesso cruzado entre carteiras comerciais.
+1. O RTV inicia autenticação corporativa OIDC Authorization Code + PKCE.
+2. O IAM exige MFA e emite token de curta duração.
+3. O backend valida assinatura, `iss`, `aud`, tenant, nonce, `nbf`, `exp`,
+   `auth_time` e o nível `acr`.
+4. O identificador imutável do colaborador é associado, no servidor, a
+   `subjectId`, `rtvId`, tenant e vínculo de telefone.
+5. A sessão registra a versão das permissões e expira após 30 minutos de
+   inatividade ou 12 horas absolutas.
+6. Crédito, dados financeiros e mutações exigem step-up MFA recente.
+7. O policy engine autoriza cada recurso antes do fan-out.
 
-## Regra de validacao
+```mermaid
+sequenceDiagram
+    participant R as RTV WhatsApp
+    participant B as Backend
+    participant I as IAM OIDC
+    participant P as Policy engine
+    participant D as Digibee
 
-1. A camada de autenticacao resolve:
-   - `rtvId` da sessao ativa.
-   - CPF informado/derivado do token de identidade.
-2. O Digibee normaliza o CPF (somente numeros).
-3. O sistema compara o **prefixo de 3 digitos** do CPF com o prefixo cadastrado no IAM para aquele `rtvId`.
-4. Se houver match, o fluxo continua normalmente.
-5. Se nao houver match, a requisicao eh bloqueada com status `UNAUTHORIZED_RTV`.
+    R->>B: solicita operação
+    B->>I: Authorization Code + PKCE
+    I->>R: MFA
+    I-->>B: code
+    B->>I: troca code + verifier
+    I-->>B: tokens
+    B->>B: valida claims e vínculo de telefone
+    B->>P: subject + ação + recurso + finalidade + ACR
+    P-->>B: allow/deny + permissionVersion
+    alt permitido
+        B->>D: comando com identidade server-side
+    else negado/step-up
+        B-->>R: resposta segura
+    end
+```
 
-## Ponto de aplicacao no fluxo
+## Atributos confiáveis
 
-- A validacao acontece antes das acoes:
-  - `query_order_credit_delivery`
-  - `query_visit_preparation`
-  - `open_ticket` (quando envolver dados do cliente)
-- Sem validacao aprovada, nao pode haver consulta em TOTVS, Portal, Tarken, LoogAI, Lecom ou ITSM.
+| Atributo | Fonte | Pode vir da LLM/cliente? |
+| --- | --- | --- |
+| `subjectId` | claim imutável do IAM | não |
+| `rtvId` | diretório corporativo server-side | não |
+| `tenantId` | issuer/claim validado | não |
+| vínculo de telefone | cadastro verificado server-side | não |
+| carteira vigente | serviço de território | não |
+| intenção/entidades | LLM, tratadas como não confiáveis | sim |
+| ticket e destinatário | estado da conversa | não |
 
-## Contrato de erro sugerido
+Se `rtvId` aparecer no payload gerado pela Nina, o backend rejeita o campo ou o
+ignora; nunca o usa para autorização.
+
+## Política ABAC
+
+```text
+authenticated(subject)
+AND token.tenant == resource.tenant
+AND allowed(subject, action)
+AND customer IN currentPortfolio(subject)
+AND purpose IN permittedPurposes(action)
+AND acr >= requiredAcr(action)
+AND auth_time >= requiredRecency(action)
+AND permissionVersion == currentPermissionVersion(subject)
+```
+
+A decisão é `deny` por padrão. Consultas por nome/documento também aplicam a
+carteira antes de devolver candidatos, evitando enumeração.
+
+## Respostas
+
+| Caso | HTTP/problem type | Comportamento |
+| --- | --- | --- |
+| token ausente/inválido | `401 /problems/authentication-required` | iniciar autenticação |
+| MFA/recência insuficiente | `403 /problems/step-up-required` | iniciar step-up |
+| fora da carteira/finalidade | `403 /problems/forbidden` | negar, auditar, mensagem genérica |
+| versão de permissão alterada | `409 /problems/permission-changed` | invalidar decisão e reautenticar |
+| IAM indisponível sem sessão válida | `503 /problems/identity-unavailable` | não consultar dados |
+
+Exemplo RFC 9457:
 
 ```json
 {
-  "correlationId": "corr-20260909-3001",
-  "status": "UNAUTHORIZED_RTV",
-  "message": "Nao foi possivel validar a identidade do RTV para esta sessao.",
-  "retryable": false,
-  "action": "escalate_to_human",
-  "reason": "SECURITY_RISK"
+  "type": "https://api.example.com/problems/step-up-required",
+  "title": "Autenticação adicional necessária",
+  "status": 403,
+  "detail": "A operação exige autenticação multifator recente.",
+  "instance": "/v1/orchestrations/01J7...",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736"
 }
 ```
 
-## Comportamento esperado na Nina
+Mensagens de WhatsApp não revelam se o cliente está fora da carteira nem a
+regra que falhou.
 
-- A Nina nao expõe detalhes de seguranca no WhatsApp.
-- Mensagem ao usuario:
-  - "Nao consigo concluir essa solicitacao agora. Encaminhei para um especialista, que retorna neste chat."
-- A Nina chama `POST /v1/nina/human-fallback` com `reason=SECURITY_RISK`.
+## Uso opcional do CPF como sinal antifraude
 
-## Consideracoes de seguranca e LGPD
+O prefixo pode ser coletado somente quando finalidade, base legal e avaliação
+de risco aprovarem. Ele:
 
-- O CPF completo nao deve ser logado em texto puro.
-- Persistir apenas:
-  - hash do CPF normalizado (quando necessario para auditoria),
-  - prefixo validado,
-  - resultado da validacao (aprovado/reprovado).
-- O prefixo de 3 digitos deve ser tratado como sinal de controle adicional e nao como fator unico de autenticacao.
+- não altera uma decisão `deny` para `allow`;
+- não substitui OIDC, MFA, vínculo de telefone ou ABAC;
+- pode elevar risco, exigir step-up ou revisão humana;
+- não é armazenado em logs ou ITSM;
+- não é enviado à OpenAI, Teams ou WhatsApp.
 
-## Observabilidade minima
+Quando correlação de CPF for indispensável, usar
+`HMAC-SHA-256(kmsKey, cpfNormalizado + tenantSalt)`, com chave não exportável em
+KMS/HSM, rotação versionada e acesso auditado. Hash simples é proibido porque o
+espaço de CPF é enumerável. Evitar persistir até mesmo o prefixo.
 
-- Contador de validacoes por resultado (`success`, `failure`).
-- Alerta para taxa de falha de validacao acima do baseline.
-- Correlation ID em todos os logs de seguranca.
+## SIM swap, aparelho compartilhado e revogação
 
+- Mudança de número ou sinal de SIM swap invalida o vínculo e exige
+  reverificação corporativa.
+- Logout, desligamento, mudança de carteira ou revogação no IAM invalidam a
+  sessão e sua cache de autorização.
+- Sessões não são transferidas entre aparelhos.
+- Operações sensíveis mostram confirmação vinculada à ação e expiram.
+
+## Auditoria e privacidade
+
+Registrar em trilha imutável:
+
+- `subjectId` pseudonimizado, ação, recurso tokenizado e finalidade;
+- decisão ABAC, política e versão;
+- `acr`, idade da autenticação e versão de permissões;
+- instante RFC 3339, `traceId`, resultado e motivo categórico.
+
+Não registrar token, CPF, telefone completo, prompt, texto livre ou evidência de
+segurança no ITSM. Retenção e direitos seguem `governanca-lgpd.md`.
+
+## Testes mínimos
+
+1. `rtvId` adulterado no payload não muda a identidade.
+2. Cliente fora da carteira não aparece nem na desambiguação.
+3. Token com issuer, audience ou tenant incorretos é rejeitado.
+4. Sessão antiga exige step-up para crédito e mutações.
+5. Mudança de carteira invalida decisão em cache.
+6. Replay de code/nonce OIDC falha.
+7. Prefixo correto de CPF, sozinho, nunca autoriza.
+8. SIM swap/revogação invalida o vínculo.

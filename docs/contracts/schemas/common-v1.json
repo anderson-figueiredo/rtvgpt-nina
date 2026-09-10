@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/common-v1.json",
+  "title": "Common types v1",
+  "$defs": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "opaqueId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "instant": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "civilDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amountMinor", "currency"],
+      "properties": {
+        "amountMinor": {
+          "type": "integer"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "ticketLinkStatus": {
+      "type": "string",
+      "enum": ["PENDING", "LINKED", "UNAVAILABLE"]
+    },
+    "sourceMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "sourceUpdatedAt",
+        "observedAt",
+        "version",
+        "staleness"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sourceUpdatedAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "staleness": {
+          "type": "string",
+          "enum": ["FRESH", "STALE"]
+        }
+      }
+    }
+  }
+}

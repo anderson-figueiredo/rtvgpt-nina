@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0.0",
+  "eventId": "01J7EVENT01",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "causationId": null,
+  "conversationId": "01J7CONVERSATION",
+  "conversationSequence": 1,
+  "conversationVersion": 1,
+  "occurredAt": "2026-09-10T01:30:00Z",
+  "channel": "whatsapp",
+  "messageId": "wamid.HBgL.example",
+  "ticketId": null,
+  "ticketLinkStatus": "PENDING",
+  "input": {
+    "type": "text",
+    "text": "Qual a previsão do pedido 12345 e meu limite?"
+  }
+}

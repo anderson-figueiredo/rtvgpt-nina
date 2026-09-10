@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0.0",
+  "operationId": "orchestration:01J7EVENT01",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "conversationId": "01J7CONVERSATION",
+  "conversationVersion": 2,
+  "eventId": "01J7EVENT01",
+  "intent": "order_inquiry",
+  "requestedTopics": [
+    "delivery_eta",
+    "credit_limit"
+  ],
+  "entities": {
+    "orderNumber": "12345"
+  },
+  "businessTimeZone": "America/Sao_Paulo"
+}

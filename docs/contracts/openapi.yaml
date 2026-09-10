@@ -1,0 +1,443 @@
+openapi: 3.1.0
+info:
+  title: Nina Integration API
+  version: 1.0.0
+  description: |
+    Contratos internos entre componentes autenticados. Webhooks nativos Meta/BSP
+    são contratos separados dos adapters e não usam o schema canônico diretamente.
+servers:
+  - url: https://integration.example.com
+security:
+  - oauth2:
+      - nina.invoke
+paths:
+  /v1/orchestrations:
+    post:
+      operationId: createOrchestration
+      summary: Executa consulta autorizada nos sistemas corporativos
+      security:
+        - oauth2:
+            - nina.invoke
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/orchestration-request-v1.json
+            example:
+              schemaVersion: 1.0.0
+              operationId: orchestration:01J7EVENT
+              traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+              conversationId: 01J7CONVERSATION
+              conversationVersion: 2
+              eventId: 01J7EVENT
+              intent: order_inquiry
+              requestedTopics:
+                - delivery_eta
+                - credit_limit
+              entities:
+                orderNumber: "12345"
+              businessTimeZone: America/Sao_Paulo
+      responses:
+        "200":
+          description: Resultado total ou parcial com metadados de fonte
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrchestrationResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/outbound-commands:
+    post:
+      operationId: acceptOutboundCommand
+      summary: Persiste comando outbound na outbox
+      security:
+        - oauth2:
+            - outbound.write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/outbound-command-v1.json
+      responses:
+        "202":
+          description: Comando aceito de forma durável
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/handoffs:
+    post:
+      operationId: createHandoff
+      summary: Cria handoff durável para publicação no Teams
+      security:
+        - oauth2:
+            - handoff.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHandoff"
+      responses:
+        "202":
+          description: Handoff enfileirado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Handoff"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/handoff-events:
+    post:
+      operationId: processHandoffEvent
+      summary: Processa ação autenticada recebida pelo Teams bot
+      security:
+        - oauth2:
+            - handoff.callback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/handoff-event-v1.json
+      responses:
+        "200":
+          description: Transição aplicada ou resultado idempotente anterior
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Handoff"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "410":
+          $ref: "#/components/responses/Problem"
+  /v1/whatsapp/status-events:
+    post:
+      operationId: acceptWhatsAppStatus
+      summary: Recebe status assinado do adapter WhatsApp
+      security:
+        - oauth2:
+            - delivery.status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryStatusEvent"
+      responses:
+        "202":
+          description: Evento de status persistido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Accepted"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://identity.example.com/oauth2/v2.0/token
+          scopes:
+            nina.invoke: Invocar orquestrações
+            outbound.write: Criar comandos outbound
+            handoff.create: Criar handoffs
+            handoff.callback: Processar ações do Teams bot
+            delivery.status: Publicar status de entrega
+  responses:
+    Problem:
+      description: Erro no formato RFC 9457
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Accepted:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - operationId
+        - status
+      properties:
+        schemaVersion:
+          type: string
+          const: 1.0.0
+        operationId:
+          type: string
+          minLength: 8
+          maxLength: 160
+        status:
+          type: string
+          const: ACCEPTED
+    Problem:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - title
+        - status
+        - traceId
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          maxLength: 1000
+        instance:
+          type: string
+          format: uri-reference
+        traceId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        retryable:
+          type: boolean
+    OrchestrationResult:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - operationId
+        - traceId
+        - conversationId
+        - conversationVersion
+        - asOf
+        - overall
+        - sources
+        - data
+        - warnings
+      properties:
+        schemaVersion:
+          type: string
+          const: 1.0.0
+        operationId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        traceId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        conversationId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        conversationVersion:
+          type: integer
+          minimum: 1
+        asOf:
+          type: string
+          format: date-time
+        overall:
+          type: string
+          enum:
+            - SUCCESS
+            - PARTIAL_SUCCESS
+            - NOT_FOUND
+            - NEEDS_DISAMBIGUATION
+            - STALE
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceMetadata"
+        data:
+          type: object
+          description: Dados específicos da intenção, validados por schema próprio.
+        warnings:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 500
+    SourceMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - source
+        - sourceUpdatedAt
+        - observedAt
+        - version
+        - staleness
+      properties:
+        source:
+          type: string
+          minLength: 1
+          maxLength: 64
+        sourceUpdatedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: string
+          format: date-time
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        staleness:
+          type: string
+          enum:
+            - FRESH
+            - STALE
+    CreateHandoff:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - handoffId
+        - operationId
+        - traceId
+        - eventId
+        - conversationId
+        - conversationVersion
+        - reason
+        - severity
+        - summary
+      properties:
+        schemaVersion:
+          type: string
+          const: 1.0.0
+        handoffId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        operationId:
+          type: string
+          pattern: "^teams-handoff:[A-Za-z0-9._:-]+$"
+          maxLength: 160
+        traceId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        eventId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        conversationId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        conversationVersion:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          enum:
+            - INFORMATION_NOT_FOUND
+            - SECURITY_RISK
+        severity:
+          type: string
+          enum:
+            - LOW
+            - MEDIUM
+            - HIGH
+            - CRITICAL
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    Handoff:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - handoffId
+        - handoffVersion
+        - status
+      properties:
+        schemaVersion:
+          type: string
+          const: 1.0.0
+        handoffId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        handoffVersion:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - ASSIGNED
+            - REPLIED
+            - CLOSED
+    DeliveryStatusEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - eventId
+        - traceId
+        - channelMessageId
+        - status
+        - occurredAt
+      properties:
+        schemaVersion:
+          type: string
+          const: 1.0.0
+        eventId:
+          type: string
+          minLength: 8
+          maxLength: 128
+        traceId:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        channelMessageId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        status:
+          type: string
+          enum:
+            - ACCEPTED
+            - DELIVERED
+            - READ
+            - FAILED
+        occurredAt:
+          type: string
+          format: date-time

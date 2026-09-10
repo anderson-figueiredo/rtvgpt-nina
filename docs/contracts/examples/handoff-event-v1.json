@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0.0",
+  "pipelineAction": "process_handoff_event",
+  "handoffAction": "reply",
+  "handoffId": "HO-20260910-4412",
+  "handoffEventId": "01J7HANDOFFEVENT",
+  "handoffVersion": 2,
+  "nonce": "oB2Fm9q7xZ4L1s6Nc8Vr",
+  "expiresAt": "2026-09-10T01:40:00Z",
+  "reply": {
+    "text": "Confirme o número do pedido."
+  }
+}

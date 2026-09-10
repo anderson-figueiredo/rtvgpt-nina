@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/outbound-command-v1.json",
+  "title": "OutboundCommand v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "outboundCommandId",
+    "operationId",
+    "traceId",
+    "eventId",
+    "causationId",
+    "conversationId",
+    "conversationVersion",
+    "inReplyToMessageId",
+    "content"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "outboundCommandId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "operationId": {
+      "type": "string",
+      "pattern": "^whatsapp-send:[A-Za-z0-9._:-]+$",
+      "maxLength": 160
+    },
+    "traceId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "causationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "conversationVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "inReplyToMessageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "dataClasses"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "dataClasses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "PERSONAL_IDENTIFIER",
+              "COMMERCIAL_CONFIDENTIAL",
+              "FINANCIAL_PROFILE"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
