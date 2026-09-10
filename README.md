@@ -4,7 +4,7 @@ TODOs:
 
 - [x] Adicionar fluxo de interação humana (via Teams) quando a nina não conseguir encontrar informações no sistema ou identificar algo de risco de segurança (fallback), com chamada específica
 - [x] Adicionar fluxo de criação de tickets no ITSM no webhook de envio de mensagem, também adicionar um fluxo atualizando o ticket quando a Nina (ou humano via Teams) responder essa mensagem
-- [ ] (adicionar no roadmap) Adicionar na integração do portal de pedidos o fluxo o usuário vai fazer o upload de um pdf ou uma foto de pedido e já é criado automaticamente no sistema. adicionar fallbacks para arquivos inválidos ou corrompidos e imagens não nítidas. IA extrai informações identifica se já tem pedido criado ou não e confirma com o usuário a criação.
+- [x] (adicionar no roadmap) Adicionar na integração do portal de pedidos o fluxo o usuário vai fazer o upload de um pdf ou uma foto de pedido e já é criado automaticamente no sistema. adicionar fallbacks para arquivos inválidos ou corrompidos e imagens não nítidas. IA extrai informações identifica se já tem pedido criado ou não e confirma com o usuário a criação.
 - [x] Adicionar fluxo de preparação para visita. RTV manda mensagem tipo "vou visitar cliente tal amanhã". O sistema responde com data da última visita, anotações e registros anteriores, histórico de pedidos e insights do cliente para o RTV.
 - [ ] Estudar riscos de integração entre esses sistemas
 - [x] Validar quem é o rtv com 3 primeiros dígitos do cpf
@@ -12,6 +12,11 @@ TODOs:
 
 Documento de apoio criado para este item:
 - `docs/validacao-rtv-cpf.md`
+- [x] Estudar riscos de integração entre esses sistemas
+- [ ] Validar quem é o rtv com 3 primeiros dígitos do cpf
+- [ ] Crira outro doc com os detalhes técnicos de integrações
+
+
 
 
 Este documento descreve a arquitetura de integracao entre o **Digibee** e os sistemas:
@@ -1383,6 +1388,52 @@ Quick replies sugeridos:
 - Cliente fora da carteira: fallback `SECURITY_RISK` (mensagem generica no WhatsApp).
 - Idempotencia por `correlationId` + `customerCode` + `visitDate`.
 - Mascaramento de CNPJ, limite detalhado e score em logs.
+
+---
+
+## 11) Roadmap — Upload inteligente de pedidos (PDF/Foto)
+
+Status: **planejado para o próximo ciclo**.
+
+### Objetivo
+- Permitir que o usuário envie **PDF ou foto** do pedido pelo WhatsApp.
+- Extrair os dados automaticamente com IA/OCR.
+- Conferir duplicidade no Portal/TOTVS e solicitar confirmação final antes de criar o pedido.
+
+### Fluxo funcional proposto
+1. Usuário envia anexo no WhatsApp.
+2. Digibee recebe o evento (`message.type=document|image`) e cria/correlaciona `ticketId` no ITSM.
+3. Pipeline `nina-order-intake-from-file` baixa o arquivo, valida formato/tamanho e executa antivírus.
+4. OCR + extração estruturada (cliente, itens, quantidade, preço, condição de pagamento, data de entrega).
+5. Digibee valida consistência fiscal/comercial e consulta possível pedido já existente (chave por cliente + itens + data + valor aproximado).
+6. Nina apresenta o resumo no WhatsApp e pede confirmação explícita do usuário:
+   - "Confirmar criação"
+   - "Editar dados"
+   - "Cancelar"
+7. Com confirmação, Digibee chama Portal de Pedidos e atualiza ERP conforme integração vigente.
+8. Ticket ITSM recebe comentário de auditoria com origem (`pdf|image`), confiança da extração e resultado final.
+
+### Fallbacks obrigatórios
+- **Arquivo inválido/corrompido**: rejeitar com orientação de reenvio e formato aceito.
+- **Imagem não nítida** (baixa confiança OCR): solicitar nova foto com dicas (luz, foco, enquadramento).
+- **Dados ambíguos/incompletos**: abrir etapa de confirmação em linguagem natural com campos pendentes.
+- **Risco de segurança** (anexo suspeito ou tentativa de bypass): acionar `POST /v1/nina/human-fallback` com `reason=SECURITY_RISK`.
+
+### Requisitos técnicos de implementação
+- Armazenamento temporário criptografado para anexos (TTL curta, ex.: 24h).
+- Versionamento do schema de extração (`order_intake_v1`) com score por campo.
+- Idempotência por hash do arquivo + remetente + janela temporal para evitar pedido duplicado em reenvio.
+- Observabilidade com métricas de:
+  - taxa de extração bem-sucedida,
+  - taxa de confirmação do usuário,
+  - taxa de fallback por baixa nitidez,
+  - taxa de duplicidade detectada.
+
+### Critérios de aceite (roadmap)
+- Upload de PDF e imagem funcionando no mesmo fluxo conversacional.
+- Em caso de baixa confiança, nenhum pedido é criado automaticamente sem confirmação do usuário.
+- Duplicidade é detectada antes da criação.
+- Todo evento relevante é registrado no ticket ITSM da conversa.
 
 ---
 
