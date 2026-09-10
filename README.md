@@ -517,10 +517,10 @@ Arquivo corrompido, imagem ilegível e campos ambíguos nunca criam pedido. Hash
 
 ## Referências
 
-- Digibee API Trigger: https://docs.digibee.com/documentation/connectors-and-triggers/triggers/web-protocols/api
-- Digibee REST V2: https://docs.digibee.com/documentation/connectors-and-triggers/connectors/web-protocols/rest-v2
-- WhatsApp Cloud API: https://developers.facebook.com/docs/whatsapp/cloud-api/
-- Copilot Studio: https://learn.microsoft.com/en-us/microsoft-copilot-studio/
-- Microsoft Graph Teams messages: https://learn.microsoft.com/en-us/graph/api/channel-post-messages
-- Teams Universal Actions: https://learn.microsoft.com/en-us/adaptive-cards/authoring-cards/universal-action-model
-- OpenAI API: https://developers.openai.com/api/reference/
+- [Digibee API Trigger](https://docs.digibee.com/documentation/connectors-and-triggers/triggers/web-protocols/api)
+- [Digibee REST V2](https://docs.digibee.com/documentation/connectors-and-triggers/connectors/web-protocols/rest-v2)
+- [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/)
+- [Copilot Studio](https://learn.microsoft.com/en-us/microsoft-copilot-studio/)
+- [Microsoft Graph Teams messages](https://learn.microsoft.com/en-us/graph/api/channel-post-messages)
+- [Teams Universal Actions](https://learn.microsoft.com/en-us/adaptive-cards/authoring-cards/universal-action-model)
+- [OpenAI API](https://developers.openai.com/api/reference/)
