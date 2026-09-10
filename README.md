@@ -14,7 +14,10 @@ Documento de apoio criado para este item:
 - `docs/validacao-rtv-cpf.md`
 - [x] Estudar riscos de integração entre esses sistemas
 - [ ] Validar quem é o rtv com 3 primeiros dígitos do cpf
-- [ ] Crira outro doc com os detalhes técnicos de integrações
+- [x] Criar outro doc com os detalhes técnicos de integrações
+
+Documento de apoio criado para este item:
+- `docs/detalhes-tecnicos-integracoes.md`
 
 
 
