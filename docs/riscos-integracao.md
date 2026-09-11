@@ -1,6 +1,6 @@
 # Riscos das integrações
 
-Este documento registra riscos, controles e evidências mínimas para a arquitetura Digibee + Nina. O [`README.md`](../README.md) é a referência arquitetural e [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md) define os mecanismos.
+Este documento registra riscos, controles e evidências mínimas para a arquitetura Digibee + Nina. O [`README.md`](../README.md) é a referência arquitetural, [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md) define os mecanismos e [`interpretacao-nina.md`](interpretacao-nina.md) cobre o runtime de NLU.
 
 ## Escala
 
@@ -30,13 +30,19 @@ Este documento registra riscos, controles e evidências mínimas para a arquitet
 | R16 | P1 | Retry duplica escrita | timeout após commit remoto | `operationId`; estado `UNKNOWN`; consulta antes de repetir | fault injection após commit não duplica |
 | R17 | P1 | Fonte de verdade indefinida | valores conflitantes | ownership por campo, proveniência, versão, `asOf` e freshness | conflito é resolvido ou sinalizado, nunca ocultado |
 | R18 | P1 | Sucesso parcial ambíguo | resposta incompleta tratada como completa | matriz por intenção e status por dependência | testes para `NOT_FOUND`, `FORBIDDEN`, `TIMEOUT`, `STALE`, `PARTIAL_SUCCESS` |
-| R19 | P1 | Contrato interno confundido com OpenAI | request incompatível | separar Nina→adapter e adapter→API escolhida | contract tests dos dois contratos |
+| R19 | P1 | Contrato interno confundido com Copilot/OpenAI | request incompatível | separar Nina→adapter e adapter→API escolhida | contract tests do envelope e dos dois provedores |
 | R20 | P1 | Intents/campos divergentes | produtor e consumidor discordam | uma intenção + `requestedTopics[]`; envelope único | todos os exemplos passam no mesmo schema |
 | R21 | P2 | Catálogo de insights inconsistente | código viola regra | catálogo versionado, enums e testes determinísticos | `VISIT_GAP` não ocorre abaixo de 45 dias |
 | R22 | P2 | Primeira mensagem duplicada | descrição e comentário iguais | primeira mensagem só na descrição; posteriores em comentário | teste de criação verifica uma ocorrência |
 | R23 | P2 | Sessão sem expiração formal | conversa antiga reutilizada | TTL, máximo absoluto, namespace e regra de handoff/resolução | testes de inatividade, limite e nova conversa |
 | R24 | P2 | Contratos sem versionamento | quebra em deploy | OpenAPI 3.1, JSON Schema, compatibilidade e depreciação | pipeline de contract tests bloqueia ruptura |
 | R25 | P2 | HTTP, datas e dinheiro ambíguos | parsing/precisão divergentes | RFC 9457, RFC 3339, data civil + timezone, minor units + moeda | testes de serialização e limites |
+| R26 | P0 | Copilot Studio orquestra ERP/crédito | tools HTTP/MCP contra origem | Studio só como canal/handoff; único efeito de negócio = gateway Nina | inventário sem actions de origem; teste negativo de tool call |
+| R27 | P0 | NLU inventa `customerId`/`rtvId` | ID na saída do modelo | menções textuais apenas; IDs descartados; resolução na carteira | fixture com ID adulterado não muda o recurso |
+| R28 | P0 | Busca de nome vaza outra carteira | homônimo ou 0 resultados distintos | filtro de carteira na origem; resposta genérica idêntica | cliente externo não aparece nem é confirmado |
+| R29 | P1 | Failover escolhe intenção mais frouxa | Copilot e OpenAI divergem | failover só em erro de plataforma; canário alerta | divergência não autoriza fan-out extra |
+| R30 | P1 | Parser monetário interpreta `1milhão`/`1,000` errado | valor pedido incorreto | parser `pt-BR` versionado; conflito → clarificação | crédito sem valor unívoco não decide |
+| R31 | P1 | Modelo afirma aprovação de crédito | “pode fazer o pedido” sem lastro | insight determinístico; renderer; `sourceField` | timeout Tarken não gera `CREDIT_SUFFICIENT_FOR_AMOUNT` |
 
 ## Controles de segurança
 
@@ -44,10 +50,14 @@ Este documento registra riscos, controles e evidências mínimas para a arquitet
 flowchart TD
     M[Mensagem aceita na inbox] --> S{Sessão OIDC válida?}
     S -->|Não| REAUTH[Solicitar autenticação]
-    S -->|Sim| L{AAL suficiente?}
+    S -->|Sim| C{ABAC de conversa?}
+    C -->|Não| DENY[Negar por padrão<br/>auditoria de segurança]
+    C -->|Sim| NLU[NLU de catálogo]
+    NLU --> RES[Resolver menção na carteira]
+    RES --> L{AAL suficiente para a ação?}
     L -->|Não| MFA[Step-up MFA]
-    L -->|Sim| A{ABAC permite ação,<br/>carteira e finalidade?}
-    A -->|Não| DENY[Negar por padrão<br/>auditoria de segurança]
+    L -->|Sim| A{ABAC do recurso,<br/>carteira e finalidade?}
+    A -->|Não| DENY
     A -->|Sim| D[DLP e minimização]
     D --> O[Orquestração]
 ```
@@ -117,7 +127,7 @@ Os valores finais dependem de capacidade e contrato dos fornecedores; os sinais 
 | Reconciliação | divergência ITSM/WhatsApp e tempo até convergência |
 | Handoff | idade por estado e callbacks rejeitados |
 | Dados | freshness por fonte e blocos omitidos |
-| IA | rejeição factual e uso do renderer de fallback |
+| IA | rejeição NLU, divergência de provedor, rejeição factual e renderer de fallback |
 | Segurança | negações ABAC, step-up e replay detectado |
 | LGPD | itens vencidos de retenção e exclusões pendentes |
 
@@ -134,11 +144,13 @@ Cada alerta precisa de owner, runbook, limiar, janela e política de escalonamen
 7. Sessão ausente, expirada, com AAL insuficiente e permissão desatualizada.
 8. Callback Teams com token inválido, nonce repetido, versão antiga e agente sem ownership.
 9. Evento de entrega duplicado e fora de ordem.
-10. LLM introduzindo nome, valor ou data não presente.
-11. DLP em OpenAI, Teams, ITSM e WhatsApp.
+10. LLM introduzindo nome, valor, data ou `customerId` não resolvido.
+11. DLP em OpenAI, Copilot, Teams, ITSM e WhatsApp.
 12. Conflito e dado vencido em cada fonte.
 13. Retenção e exclusão propagada.
 14. Compatibilidade entre versões de produtor e consumidor.
+15. Cliente fora da carteira, homônimo e injeção de prompt.
+16. Timeout Tarken não afirma capacidade de pedido.
 
 ## Critério de liberação
 

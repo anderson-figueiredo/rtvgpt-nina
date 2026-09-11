@@ -1,6 +1,6 @@
 # Detalhes técnicos das integrações
 
-Este documento detalha a implementação da arquitetura descrita no [`README.md`](../README.md). Exemplos são referenciais e devem ser validados pelos schemas publicados.
+Este documento detalha a implementação da arquitetura descrita no [`README.md`](../README.md). A interpretação de linguagem natural está em [`interpretacao-nina.md`](interpretacao-nina.md). Exemplos são referenciais e devem ser validados pelos schemas publicados.
 
 ## 1. Pipelines e componentes
 
@@ -9,7 +9,9 @@ Este documento detalha a implementação da arquitetura descrita no [`README.md`
 | Adapter WhatsApp Cloud API | `GET/POST /v1/channels/whatsapp/meta/webhook` | Verificação, assinatura nos bytes originais, limites e normalização | Evento persistido ou rejeição |
 | Adapter BSP | Endpoint próprio por BSP | Validar contrato específico do fornecedor | Mesmo evento canônico |
 | Inbox worker | Evento `RECEIVED` | Consumir em ordem por `conversationId` | `COMPLETED` ou falha tipada |
-| `nina-whatsapp-orchestrator` | Evento autorizado | Orquestrar consultas e mutações | Resultado consolidado versionado |
+| `nina-nlu` | Evento com ABAC de conversa | Parser determinístico + adapter Copilot/OpenAI + guardrails de catálogo | Intenção, tópicos e menções validados |
+| `resolve_customer_mention` | Menção de cliente | Busca filtrada pela carteira do `rtvId` de servidor | 0, 1 ou N candidatos |
+| `nina-whatsapp-orchestrator` | Recurso autorizado | Orquestrar consultas e mutações da intenção | Resultado consolidado versionado |
 | `nina-human-fallback` | Comando de handoff | Criar handoff e publicação via Graph | `handoffId` |
 | Teams bot | Universal Action | Validar atividade e encaminhar evento autenticado | Evento de handoff |
 | Outbox workers | Comando pendente | Efeitos independentes em ITSM, WhatsApp e Teams | Confirmação/reconciliação |
@@ -31,7 +33,9 @@ flowchart TD
     G --> H
     F --> Q[Fila por conversationId]
     Q --> I[OIDC/MFA + ABAC]
-    I --> J[Nina e Digibee]
+    I --> J[Nina NLU]
+    J --> K[Resolução na carteira]
+    K --> L[Nina e Digibee]
 ```
 
 O endpoint só responde `200` depois do commit. Falha na inbox não pode ser mascarada como aceite. Parse, ticket, Nina e sistemas corporativos ficam fora do caminho de ACK.
@@ -116,7 +120,7 @@ A primeira mensagem aparece apenas na descrição mínima da criação. Mensagen
 
 ## 5. Contrato de orquestração
 
-Metadados ficam no envelope; a intenção é única e os tópicos são uma lista:
+Metadados ficam no envelope; a intenção é única e os tópicos são uma lista. A NLU preenche `intent`, `requestedTopics` e `mentions`; o orquestrador só corre depois da resolução na carteira. IDs emitidos pelo modelo são ignorados.
 
 ```json
 {
@@ -128,10 +132,18 @@ Metadados ficam no envelope; a intenção é única e os tópicos são uma lista
   "conversationVersion": 4,
   "causationId": "evt_01J_inbound",
   "ticketId": null,
-  "intent": "order_query",
-  "requestedTopics": ["delivery_eta", "credit_limit"],
-  "entities": {
-    "orderNumber": "12345"
+  "intent": "credit_analysis",
+  "requestedTopics": ["credit_limit", "credit_available", "credit_check_amount", "overdue_titles"],
+  "mentions": {
+    "customer": {
+      "raw": "Hommerson Agro",
+      "type": "CUSTOMER_NAME"
+    },
+    "requestedOrderAmount": {
+      "raw": "1milhão",
+      "amountMinor": 100000000,
+      "currency": "BRL"
+    }
   }
 }
 ```
@@ -204,12 +216,19 @@ Mutações, crédito decisório e criação de pedido não admitem sucesso parci
 
 ## 8. LLM e validação factual
 
-Há dois contratos diferentes:
+Há dois estágios e dois contratos por estágio:
 
-1. Nina → adapter LLM: envelope interno com intenção da operação, dados minimizados e schema de saída.
-2. Adapter → OpenAI: request nativo para uma API escolhida, com modelo aprovado, structured output, timeout e tratamento de recusa/incompletude.
+1. NLU: classificar utterance no catálogo `intents-v1` e extrair menções. Provedores: `microsoft_copilot` e `openai`.
+2. Composição: gerar texto apenas com fatos consolidados. Renderer determinístico é preferencial.
 
-O renderer determinístico é preferencial para fatos. Se houver LLM:
+Contratos:
+
+1. Nina → adapter LLM: envelope interno com operação (`interpret_utterance` ou composição), dados minimizados e schema de saída.
+2. Adapter → provedor: request nativo (Azure OpenAI/Foundry ou OpenAI), modelo em allowlist, structured output, timeout e tratamento de recusa/incompletude.
+
+O JSON auto-detectado do Copilot Studio e a generative orchestration **não** substituem o schema versionado. O adapter rejeita chaves extras, intenção fora do enum e IDs de negócio.
+
+O renderer determinístico é preferencial para fatos. Se houver LLM na composição:
 
 - saída usa JSON Schema estrito;
 - cada segmento factual contém `sourceField`;
@@ -233,7 +252,7 @@ O renderer determinístico é preferencial para fatos. Se houver LLM:
 }
 ```
 
-O catálogo `insights-v1` usa enums únicos. `VISIT_GAP` requer no mínimo 45 dias; uma visita há 29 dias não gera esse código. Entrega em aberto usa `OPEN_ORDERS`; ocorrência usa `DELIVERY_EXCEPTION`.
+O catálogo `insights-v1` usa enums únicos. `VISIT_GAP` requer no mínimo 45 dias; uma visita há 29 dias não gera esse código. Entrega em aberto usa `OPEN_ORDERS`; ocorrência usa `DELIVERY_EXCEPTION`. `CREDIT_INSUFFICIENT` e `CREDIT_SUFFICIENT_FOR_AMOUNT` só nascem de Tarken `SUCCESS` mais o valor pedido já parseado; timeout não afirma capacidade.
 
 ## 9. Outbound e marcos de entrega
 
@@ -334,6 +353,8 @@ Cada evento registra precondição, ator, versão esperada e política para atra
 | handoff por idade/estado | SLA humano |
 | freshness por fonte | qualidade do consolidado |
 | rejeições ABAC | segurança |
+| rejeições NLU / injeção / ID inventado | qualidade da interpretação |
+| divergência canário Copilot vs OpenAI | estabilidade do catálogo |
 | rejeições factuais | qualidade da composição |
 
 Alertas devem ter runbook, owner e limiar ajustado ao SLO. Logs não contêm payload completo nem identificadores diretos.
@@ -347,6 +368,7 @@ Alertas devem ter runbook, owner e limiar ajustado ao SLO. Logs não contêm pay
 5. Testar ITSM indisponível sem perda de trilha.
 6. Testar token, replay, versão e ownership do callback Teams.
 7. Validar DLP e ACL por destino.
-8. Testar recusas/incompletude da LLM e fallback determinístico.
-9. Verificar retenção, exclusão propagada e auditoria imutável.
-10. Publicar changelog, compatibilidade e rollback.
+8. Testar recusas/incompletude da NLU, failover de provedor e fallback determinístico.
+9. Testar cliente fora da carteira e `customerId` inventado pela LLM.
+10. Verificar retenção, exclusão propagada e auditoria imutável.
+11. Publicar changelog, compatibilidade e rollback.
