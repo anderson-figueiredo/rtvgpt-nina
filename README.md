@@ -6,7 +6,9 @@ Documentos complementares:
 
 - [`docs/detalhes-tecnicos-integracoes.md`](docs/detalhes-tecnicos-integracoes.md): contratos, estados, idempotência e operação;
 - [`docs/riscos-integracao.md`](docs/riscos-integracao.md): riscos, controles e critérios de produção;
-- [`docs/validacao-rtv-cpf.md`](docs/validacao-rtv-cpf.md): autenticação corporativa, vínculo do RTV e uso restrito do CPF.
+- [`docs/validacao-rtv-cpf.md`](docs/validacao-rtv-cpf.md): autenticação corporativa, vínculo do RTV e uso restrito do CPF;
+- [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md): NLU de catálogo fechado, provedores Copilot/OpenAI e resolução na carteira;
+- [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta.
 
 ## Princípios obrigatórios
 
@@ -30,7 +32,9 @@ Documentos complementares:
 | Inbox | Aceite durável, unicidade de `messageId` e ordenação por conversa |
 | Identidade | OIDC Authorization Code + PKCE, MFA, sessão e vínculo telefone–RTV |
 | Autorização | ABAC por sujeito, ação, carteira, finalidade e nível de autenticação |
-| Nina | Intenção e entidades não confiáveis; composição validada |
+| Nina NLU | Intenção de catálogo e menções não confiáveis; Copilot ou OpenAI via adapter |
+| Resolução | Cliente/pedido na carteira vigente; IDs nunca vêm da LLM |
+| Nina composição | Template determinístico ou LLM + validador factual |
 | Digibee | Orquestração, deadlines, contratos, consolidação e regras determinísticas |
 | Sistemas de origem | Lecom, Portal, TOTVS, Tarken e LoogAI |
 | Outbox | Comandos duráveis para ITSM, WhatsApp e Teams |
@@ -44,9 +48,11 @@ flowchart LR
     I --> ACK[ACK 200]
     I --> Q[Fila particionada<br/>por conversationId]
     Q --> AUTH[OIDC/MFA + identidade servidor]
-    AUTH --> ABAC[Autorização ABAC]
-    ABAC --> N[Nina: intenção e entidades]
-    N --> D[Digibee]
+    AUTH --> ABAC[ABAC de conversa]
+    ABAC --> NLU[Nina NLU<br/>catálogo + menções]
+    NLU --> RES[Resolução na carteira]
+    RES --> ABAC2[ABAC do recurso]
+    ABAC2 --> D[Digibee]
     D --> S[Sistemas de origem]
     S --> D
     D --> CONS[Consolidação<br/>fonte, versão e freshness]
@@ -111,7 +117,10 @@ sequenceDiagram
     Q->>Q: OIDC/MFA, ABAC e sequência
     Q->>T: Provisionar/reconciliar ticket via outbox
     Q->>N: Evento canônico com ticketId opcional
-    N->>D: Intenção + entidades não confiáveis
+    N->>N: NLU estruturada Copilot/OpenAI
+    N->>D: Resolver menções na carteira
+    D-->>N: Cliente autorizado ou FORBIDDEN
+    N->>D: Intenção + menções não confiáveis
 ```
 
 O `200` não declara conclusão do negócio. Payload inválido ou assinatura incorreta é rejeitado sem persistência; indisponibilidade da inbox não recebe ACK de sucesso.
@@ -201,7 +210,9 @@ A autorização ABAC tem negação por padrão, ocorre antes do fan-out e é ref
 
 ## Orquestração e contratos de intenção
 
-A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanecem no envelope.
+A interpretação do WhatsApp não usa o Copilot Studio como fonte de verdade. O runtime `nina-nlu` classifica a utterance contra o catálogo `intents-v1`, devolve menções não confiáveis e só então o Digibee resolve cliente ou pedido na carteira do RTV. Detalhes, guardrails de injeção e o exemplo “Hommerson Agro / 1 milhão” estão em [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md).
+
+A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanecem no envelope. IDs de cliente, `rtvId` e códigos emitidos pelo modelo são descartados.
 
 ```json
 {
@@ -213,22 +224,32 @@ A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanec
   "conversationVersion": 8,
   "causationId": "evt_01J_inbound",
   "ticketId": null,
-  "intent": "order_query",
-  "requestedTopics": ["delivery_eta", "credit_limit"],
-  "entities": {
-    "orderNumber": "12345"
+  "intent": "credit_analysis",
+  "requestedTopics": ["credit_limit", "credit_available", "credit_check_amount", "overdue_titles"],
+  "mentions": {
+    "customer": {
+      "raw": "Hommerson Agro",
+      "type": "CUSTOMER_NAME"
+    },
+    "requestedOrderAmount": {
+      "raw": "1milhão",
+      "amountMinor": 100000000,
+      "currency": "BRL"
+    }
   }
 }
 ```
 
-`entities` é não confiável. O backend acrescenta o contexto de segurança derivado no servidor e só então constrói as chamadas.
+`mentions` é não confiável. O backend resolve cliente e pedido na carteira, acrescenta o contexto de segurança derivado no servidor e só então constrói as chamadas.
 
 ### Matriz de resultado mínimo
 
 | Intenção | Obrigatório | Opcional | Freshness máxima | `NOT_FOUND` | `TIMEOUT` / `STALE` | `PARTIAL_SUCCESS` |
 | --- | --- | --- | --- | --- | --- | --- |
+| `credit_analysis` | Cliente na carteira e AAL financeiro | Checagem de valor pedido | Crédito 5 min; títulos 5 min | Resposta genérica, sem revelar cliente fora da carteira | Não decidir capacidade; sinalizar limitação | Não permitido |
 | `order_query` | Pedido autorizado | ETA, crédito | Pedido 5 min; ETA 15 min; crédito 5 min | Informar ausência sem revelar cliente | Omitir tópico e sinalizar indisponibilidade | Responder apenas tópicos válidos |
 | `visit_preparation` | Cliente autorizado | Visitas, pedidos, crédito, logística | Cadastro 24 h; demais 15 min | Handoff se cliente não puder ser resolvido | Omitir bloco e indicar limitação | Briefing com blocos válidos |
+| `customer_lookup` | Cliente autorizado | Cadastro | Cadastro 24 h | Resposta genérica | Omitir bloco | Responder campos válidos |
 | `customer_update` | Cliente, campos e MFA | — | Autorização em tempo real | Não executar | Não repetir sem reconciliação | Não permitido |
 | `order_create` | Rascunho confirmado, MFA e versão | — | Autorização em tempo real | Não executar | Consultar por `operationId` | Não permitido |
 
@@ -257,6 +278,8 @@ Insights são determinísticos, versionados e testados:
 | Código | Condição |
 | --- | --- |
 | `CREDIT_NEAR_LIMIT` | uso do limite maior ou igual a 80% |
+| `CREDIT_INSUFFICIENT` | valor pedido maior que o disponível autorizado |
+| `CREDIT_SUFFICIENT_FOR_AMOUNT` | valor pedido menor ou igual ao disponível, sem fato de bloqueio na origem |
 | `OVERDUE_TITLES` | há título vencido autorizado |
 | `DELIVERY_EXCEPTION` | entrega possui ocorrência |
 | `OPEN_ORDERS` | há pedidos ainda abertos |
@@ -267,7 +290,7 @@ Insights são determinísticos, versionados e testados:
 
 Fatos devem ser renderizados por template sempre que possível. Se uma LLM for usada, cada afirmação factual referencia `sourceField`; schema estrito e validador rejeitam nomes, números, datas ou valores ausentes. Em falha ou recusa, usa-se renderer determinístico. Histórico conversacional livre não é enviado à etapa de composição.
 
-“Nina → adapter LLM” é um contrato interno. O adapter realiza o mapping para uma API escolhida da OpenAI e define modelo aprovado, structured output, timeout, recusa e resposta incompleta. Esse envelope não deve ser confundido com request nativo da Responses API.
+“Nina → adapter LLM” é um contrato interno, usado na NLU e, se necessário, na composição. O adapter mapeia para o provedor `microsoft_copilot` (Azure OpenAI / Microsoft Foundry) ou `openai`, com modelo em allowlist, structured output, timeout, recusa e resposta incompleta. Esse envelope não é o request nativo da Responses API nem o JSON auto-detectado do Copilot Studio. O bot Copilot no Teams permanece canal e handoff; não orquestra sistemas de origem.
 
 Exemplo de saída validável:
 
@@ -498,6 +521,8 @@ Arquivo corrompido, imagem ilegível e campos ambíguos nunca criam pedido. Hash
 - handoffs estagnados e callbacks rejeitados;
 - freshness por fonte;
 - decisões ABAC negadas;
+- rejeições de NLU, injeção, ID inventado e clarificações;
+- divergência canário Copilot versus OpenAI;
 - falhas do validador factual e uso de fallback determinístico;
 - pendências de exclusão e retenção.
 
@@ -510,6 +535,8 @@ Arquivo corrompido, imagem ilegível e campos ambíguos nunca criam pedido. Hash
 - callback Teams autenticado, autorizado, idempotente e não repetível;
 - política de indisponibilidade do ITSM comprovada por teste;
 - OpenAPI/JSON Schemas versionados e contract tests;
+- NLU de catálogo fechado, resolução na carteira e testes de acesso cruzado;
+- Copilot Studio sem generative orchestration contra ERP/crédito;
 - renderer determinístico ou validação factual estrita;
 - DLP antes de cada fronteira;
 - RIPD, retenção, ACL, trilha imutável e direitos LGPD definidos;

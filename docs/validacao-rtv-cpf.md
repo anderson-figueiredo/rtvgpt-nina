@@ -62,10 +62,12 @@ sequenceDiagram
 `rtvId`, telefone, tenant, destinatário e carteira não são aceitos de:
 
 - texto do usuário;
-- entidades extraídas pela LLM;
+- menções extraídas pela LLM;
 - saída do modelo;
 - Adaptive Card;
 - payload público do orquestrador.
+
+A interpretação da Nina resolve o cliente pela carteira vigente, nunca pela identidade que o modelo sugerir. Consulte [`interpretacao-nina.md`](interpretacao-nina.md).
 
 O gateway constrói um contexto interno após validar as claims:
 
@@ -200,13 +202,14 @@ Devem ser definidos base legal, finalidade, retenção, descarte, acesso, operad
 1. Prefixo correto sem sessão OIDC não autoriza.
 2. `rtvId` adulterado em payload não altera a identidade resolvida.
 3. Cliente fora da carteira é negado antes de qualquer fan-out.
-4. Token com `iss`, `aud`, tenant, assinatura ou validade incorretos é rejeitado.
-5. Reuso de `state`, nonce ou authorization code é rejeitado.
-6. Sessão expirada e permissão versionada invalidada exigem autenticação.
-7. Crédito e mutação exigem step-up segundo `auth_time`.
-8. Troca de número revoga sessões antigas.
-9. HMAC usa chave KMS/HSM versionada; hash simples não aparece.
-10. Logs, ITSM, Teams e LLM não contêm CPF ou contexto de autorização indevido.
+4. `customerId` ou `rtvId` devolvidos pela NLU são ignorados.
+5. Token com `iss`, `aud`, tenant, assinatura ou validade incorretos é rejeitado.
+6. Reuso de `state`, nonce ou authorization code é rejeitado.
+7. Sessão expirada e permissão versionada invalidada exigem autenticação.
+8. Crédito e mutação exigem step-up segundo `auth_time`.
+9. Troca de número revoga sessões antigas.
+10. HMAC usa chave KMS/HSM versionada; hash simples não aparece.
+11. Logs, ITSM, Teams e LLM não contêm CPF ou contexto de autorização indevido.
 
 ## Critérios para produção
 
@@ -215,6 +218,7 @@ Devem ser definidos base legal, finalidade, retenção, descarte, acesso, operad
 - policy engine com negação por padrão e carteira atualizada;
 - step-up para finanças e mutações;
 - contexto de identidade inacessível à LLM;
+- resolução de cliente filtrada pela carteira, sem IDs da NLU;
 - trilha imutável e alertas de negação/risco;
 - RIPD, retenção e exclusão aprovados;
 - testes de adulteração e acesso cruzado automatizados.
