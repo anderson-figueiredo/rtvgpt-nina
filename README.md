@@ -7,7 +7,7 @@ Documentos complementares:
 - [`docs/detalhes-tecnicos-integracoes.md`](docs/detalhes-tecnicos-integracoes.md): contratos, estados, idempotência e operação;
 - [`docs/riscos-integracao.md`](docs/riscos-integracao.md): riscos, controles e critérios de produção;
 - [`docs/validacao-rtv-cpf.md`](docs/validacao-rtv-cpf.md): autenticação corporativa, vínculo do RTV e uso restrito do CPF;
-- [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md): NLU de catálogo fechado, provedores Copilot/OpenAI e resolução na carteira;
+- [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md): especificação complementar de NLU, provedores e resolução na carteira;
 - [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta.
 
 ## Princípios obrigatórios
@@ -22,6 +22,7 @@ Documentos complementares:
 8. A LLM é um componente não confiável: fatos devem vir de campos de origem e passar por validação.
 9. Dados são classificados e minimizados antes de atravessar qualquer fronteira.
 10. Contratos HTTP e de eventos são versionados e validados.
+11. A interpretação é catálogo fechado: menção não é identidade; fan-out só ocorre após resolução na carteira.
 
 ## Visão de componentes
 
@@ -208,11 +209,364 @@ AND nível de autenticação suficiente
 
 A autorização ABAC tem negação por padrão, ocorre antes do fan-out e é reforçada na fonte quando possível. Os três primeiros dígitos do CPF são somente sinal antifraude; não autenticam nem autorizam. Consulte o documento específico de validação.
 
+## Interpretação da Nina
+
+A Nina existente no Teams foi construída com Microsoft Copilot Studio. Esse agente permanece superfície de canal e de handoff humano. Ele **não** é a fonte de verdade da interpretação do WhatsApp e **não** escolhe, por orquestração generativa, quais sistemas corporativos consultar.
+
+O runtime de interpretação (`nina-nlu`) é um classificador de catálogo fechado. Ele devolve uma intenção, tópicos e menções não confiáveis; o Digibee resolve cliente ou pedido na carteira do RTV; só então ocorre o fan-out já previsto nesta arquitetura. Copilot (Azure OpenAI / Microsoft Foundry) e OpenAI são provedores atrás do mesmo adapter interno.
+
+Análise de crédito é decisão assistida com fatos de origem, não aprovação de pedido.
+
+### Fronteiras de confiança
+
+| Componente | Confia em | Não confia em | Efeito permitido |
+| --- | --- | --- | --- |
+| Adapter de canal | Assinatura e `messageId` | Texto do usuário como autoridade | Persistência na inbox |
+| Identidade / ABAC de conversa | Claims OIDC e vínculo servidor-side | `rtvId`, tenant ou carteira no texto | Autorizar o uso da Nina neste canal |
+| Extratores determinísticos | Parsers versionados (`pt-BR`) | Valor ambíguo da LLM | Hints de pedido, documento e dinheiro |
+| Adapter NLU | Schema e catálogo `intents-v1` | IDs, identidade e tools inventados | Intenção + menções |
+| Resolução na carteira | `rtvId` de servidor + TOTVS/Lecom filtrados | Nome cru ou `customerId` da LLM | 0, 1 ou N candidatos da carteira |
+| ABAC do recurso | Policy engine e AAL | Intenção “mais permissiva” do modelo | Fan-out Digibee ou recusa genérica |
+| Digibee / origem | Contratos e freshness | Texto livre e Copilot Studio | Consultas e mutações autorizadas |
+| Composição | `sourceField` e consolidado | Histórico conversacional livre | Mensagem validada na outbox |
+
+```mermaid
+flowchart TD
+    subgraph canal [Canal]
+        M[Evento canônico WhatsApp]
+    end
+    subgraph confianca [Confiança de servidor]
+        S{Sessão OIDC válida?}
+        A1{ABAC de conversa}
+    end
+    subgraph nlu [Interpretação não confiável]
+        HYB[Extratores determinísticos]
+        LLM[Adapter NLU Copilot ou OpenAI]
+        VAL[Schema, catálogo e guardrails]
+    end
+    subgraph resolucao [Resolução autorizada]
+        RES[Cliente ou pedido na carteira]
+        A2{ABAC do recurso + AAL}
+    end
+    subgraph negocio [Efeito de negócio]
+        ORCH[Fan-out Digibee da intenção]
+        CONS[Consolidação e insights]
+        R[Renderer ou LLM + validador]
+    end
+
+    M --> S
+    S -->|Não| AUTH[AUTHENTICATION_REQUIRED]
+    S -->|Sim| A1
+    A1 -->|Não| DENY[FORBIDDEN genérico]
+    A1 -->|Sim| HYB
+    HYB --> LLM
+    LLM --> VAL
+    VAL -->|Recusa / baixa confiança| CLAR[Clarificação ou out_of_scope]
+    VAL -->|ok| RES
+    RES -->|0 na carteira| DENY
+    RES -->|N candidatos| CLAR
+    RES -->|1 candidato| A2
+    A2 -->|STEP_UP| MFA[Solicitar MFA]
+    A2 -->|Não| DENY
+    A2 -->|Sim| ORCH
+    ORCH --> CONS
+    CONS --> R
+```
+
+Ordem obrigatória: identidade e ABAC de conversa → minimização do texto → extração determinística → NLU estruturada → validação de schema e guardrails → resolução filtrada pela carteira → ABAC do recurso e step-up → fan-out Digibee → composição factual. A busca de cliente fora da carteira não é consulta permitida: zero resultado na carteira e cliente existente em outra carteira produzem a mesma resposta genérica.
+
+### Papel do Copilot Studio
+
+| Superfície | Papel permitido | Papel proibido |
+| --- | --- | --- |
+| Teams bot atual | Canal, Adaptive Card e handoff humano | Orquestrar fan-out, escolher `rtvId` ou cliente, responder fatos sem validador |
+| AI prompts / Foundry | Provedor de NLU com JSON estruturado, atrás do adapter | Schema aberto, texto livre como autoridade, grounding em Dataverse com PII |
+| Generative orchestration | Desligada para WhatsApp e sistemas corporativos | Encadear tools contra ERP, crédito ou ITSM |
+| Conectores HTTP/MCP | Somente o gateway Nina/Digibee já autenticado | OpenAPI dos sistemas de origem publicado ao agente |
+
+O inventário do agente atual (tópicos, frases de gatilho, entidades, actions e knowledge) é insumo de exemplos e vocabulário. Não bloqueia o runtime novo e não vira contrato.
+
+### Contrato Nina → adapter NLU
+
+Envelope interno, distinto do request nativo de Copilot ou OpenAI. Campos ausentes de propósito: `rtvId`, `subjectId`, tenant, telefone, carteira, nomes de outros clientes e histórico conversacional livre.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "operation": "interpret_utterance",
+  "traceId": "trc_01J...",
+  "conversationId": "cnv_01J...",
+  "locale": "pt-BR",
+  "catalogVersion": "intents-v1",
+  "input": {
+    "text": "Preciso de uma análise de crédito para o cliente Hommerson Agro para ver se ele consegue fazer um pedido de 1milhão."
+  },
+  "deterministicHints": {
+    "amounts": [
+      {
+        "raw": "1milhão",
+        "amountMinor": 100000000,
+        "currency": "BRL"
+      }
+    ],
+    "orderNumbers": [],
+    "taxIds": []
+  },
+  "pendingClarification": null
+}
+```
+
+Saída em JSON Schema estrito (`additionalProperties: false`):
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "catalogVersion": "intents-v1",
+  "intent": "credit_analysis",
+  "requestedTopics": ["credit_limit", "credit_available", "credit_check_amount", "overdue_titles"],
+  "mentions": {
+    "customer": {
+      "raw": "Hommerson Agro",
+      "type": "CUSTOMER_NAME"
+    },
+    "requestedOrderAmount": {
+      "raw": "1milhão",
+      "amountMinor": 100000000,
+      "currency": "BRL"
+    }
+  },
+  "confidence": 0.91,
+  "needsClarification": false,
+  "clarificationCode": null,
+  "guardrailFlags": []
+}
+```
+
+| Campo | Autoridade |
+| --- | --- |
+| `intent`, `requestedTopics`, `mentions.*.raw` | LLM, não confiável |
+| `mentions.*.amountMinor` | LLM só se coincidir com `deterministicHints`; senão clarificação |
+| `confidence` | Sinal; limiar versionado no servidor |
+| IDs de cliente, pedido, RTV | Nunca aceitos da LLM |
+| `guardrailFlags` | LLM pode sugerir; o motor de guardrail do servidor decide |
+
+Recusa, timeout, JSON inválido, propriedade extra, intenção fora do enum ou confiança abaixo do limiar viram `NLU_REJECTED` e seguem política de clarificação, não fan-out.
+
+### Catálogo `intents-v1`
+
+Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]`.
+
+| Intenção | Quando usar | Tópicos | Fan-out após ABAC | Parcial |
+| --- | --- | --- | --- | --- |
+| `credit_analysis` | Limite, score, “cabe um pedido de X” | `credit_limit`, `credit_available`, `credit_check_amount`, `overdue_titles` | Tarken + títulos TOTVS | Não |
+| `order_query` | Status, entrega, itens de um pedido | `delivery_eta`, `credit_limit`, `order_status` | TOTVS, LoogAI, crédito só se pedido | Sim, por tópico |
+| `visit_preparation` | Briefing de visita | visitas, pedidos, crédito, logística | Consolidado já especificado | Sim |
+| `customer_lookup` | Cadastro básico autorizado | cadastro | Lecom/TOTVS cadastral | Sim |
+| `customer_update` | Alterar cadastro | campos declarados | Mutação com MFA | Não |
+| `order_create` | Criar pedido | rascunho | Outbox após confirmação | Não |
+| `clarification_response` | Resposta a pergunta da Nina | herda a intenção pendente | Retoma o fluxo pendente | Conforme a original |
+| `human_handoff_request` | Pedido explícito de humano | — | Handoff Teams | — |
+| `out_of_scope` | Fora do atendimento RTV | — | Sem fan-out | — |
+
+`credit_analysis` não cria pedido. “Consegue fazer um pedido de 1 milhão” é checagem de valor contra fatos financeiros, com insight determinístico.
+
+### Extração híbrida
+
+| Sinal | Método | Exemplo |
+| --- | --- | --- |
+| Valor monetário | Parser `pt-BR` versionado | `1milhão`, `1 milhão`, `1.000.000`, `R$ 1m` → `100000000` BRL |
+| Número de pedido | Regex de catálogo | `12345`, `pedido 12345` |
+| CNPJ/CPF | Detector; tokenização imediata | nunca enviado completo ao modelo nem ao WhatsApp |
+| Nome de cliente | LLM + busca na carteira | `Hommerson Agro` |
+| Datas | Parser civil + timezone de negócio | `hoje`, `10/09` |
+
+```mermaid
+flowchart LR
+    T[Texto do turno] --> P[Parser determinístico]
+    T --> L[LLM estruturada]
+    P --> F[Fusão versionada]
+    L --> F
+    F -->|Unívoco| M[Menções + hints]
+    F -->|Conflito ou ambíguo| C[Clarificação]
+    F -->|Fora do catálogo| O[out_of_scope / NLU_REJECTED]
+```
+
+O parser de valores aceita sufixos comuns (`mil`, `milhão`/`milhões`, `k`, `m`) e rejeita entradas ambíguas (`1,000` sem contexto de milhar versus decimal). Se a LLM devolver um `amountMinor` diferente do parser, prevalece o parser somente quando o texto original casa de forma unívoca; caso contrário, clarifica.
+
+### Resolução de entidades
+
+Menção (`Hommerson Agro`) não é identidade. Identidade de cliente só existe depois da resolução filtrada pela carteira vigente. A LLM não participa desta etapa.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "operation": "resolve_customer_mention",
+  "traceId": "trc_01J...",
+  "mention": {
+    "raw": "Hommerson Agro",
+    "type": "CUSTOMER_NAME"
+  }
+}
+```
+
+O gateway acrescenta o contexto interno assinado (`rtvId`, tenant, finalidade). O Digibee consulta a carteira vigente no TOTVS e, se necessário, o cadastro Lecom **já filtrado**.
+
+```mermaid
+flowchart TD
+    MEN[Menção textual] --> GW[Gateway assina rtvId de servidor]
+    GW --> D[Digibee: carteira TOTVS + Lecom filtrado]
+    D --> R{Candidatos na carteira}
+    R -->|1 acima do limiar| ABAC[ABAC do recurso]
+    R -->|N| AMB[AMBIGUOUS_CUSTOMER]
+    R -->|0| FORB[FORBIDDEN genérico]
+    R -->|Timeout| LIM[Limitação sem fan-out financeiro]
+    AMB --> WHATS[Lista curta: nome fantasia e cidade]
+    FORB --> GEN[Mesma resposta se existir fora da carteira]
+```
+
+| Resultado | Ação |
+| --- | --- |
+| 1 candidato acima do limiar | Seguir para ABAC do recurso |
+| N candidatos | `clarificationCode=AMBIGUOUS_CUSTOMER` com rótulos mínimos da carteira |
+| 0 na carteira | `FORBIDDEN` genérico; não informar se o nome existe em outra carteira |
+| Timeout da busca | Sem fan-out financeiro; informar limitação |
+
+Rótulos de clarificação usam nome fantasia autorizado e, se preciso, cidade. Não incluem CNPJ completo, limite, score nem indício de clientes fora da carteira. Pedido mencionado é resolvido da mesma forma: precisa pertencer a cliente da carteira.
+
+### Guardrails na interpretação
+
+Os controles de identidade, ABAC e DLP aplicam-se antes e depois da NLU. A interpretação acrescenta:
+
+| Código | Sinal | Efeito |
+| --- | --- | --- |
+| `PROMPT_INJECTION` | Alterar sistema, listar tools, ignorar catálogo | Recusa, auditoria `SECURITY_EVIDENCE`, resposta genérica |
+| `CROSS_PORTFOLIO` | Cliente “de outro RTV”, dump de carteira | Mesmo tratamento de `FORBIDDEN` |
+| `IDENTITY_SPOOF` | Usuário informa `rtvId`, CPF de colega, tenant | Ignorar menção; identidade permanece a da sessão |
+| `PII_EXFILTRATION` | Pedido para repetir CPF, telefone, token | Recusa e DLP |
+| `OUT_OF_SCOPE` | RH, TI pessoal, outros negócios | `out_of_scope` sem fan-out |
+| `LOW_CONFIDENCE` | Abaixo do limiar versionado | Clarificação |
+| `UNGROUNDED_ID` | LLM emitiu código de cliente/pedido | Descartar ID; resolver só pela menção textual |
+
+O WhatsApp nunca recebe o motivo interno. `FORBIDDEN` e cliente inexistente na carteira são indistinguíveis para o usuário. Crédito, limite, score e títulos exigem AAL financeiro; a NLU não reduz esse requisito.
+
+### Provedores LLM
+
+```text
+nina-nlu
+  -> provider router (política versionada)
+       -> microsoft_copilot (Azure OpenAI / Microsoft Foundry)
+       -> openai (API aprovada)
+```
+
+```mermaid
+flowchart LR
+    N[nina-nlu] --> R[Router versionado]
+    R --> C[microsoft_copilot]
+    R --> O[openai]
+    C --> V[Validador de schema]
+    O --> V
+    V -->|ok| I[Intenção + menções]
+    V -->|recusa / timeout / extra| X[NLU_REJECTED]
+    R -->|429 / 5xx / transporte| F[Failover para reserva]
+    F --> V
+```
+
+| Tópico | Regra |
+| --- | --- |
+| Contrato interno | Sempre o envelope Nina → adapter |
+| Contrato externo | Structured output nativo de cada provedor; schema equivalente |
+| Modelo | Allowlist; sem troca silenciosa de família |
+| Timeout | Envelopado; estouro = `NLU_TIMEOUT` |
+| Failover | Só para o provedor reserva se a falha for de transporte/`429`/`5xx`; não por “não gostei da intenção” |
+| Divergência | Canário compara intenções; divergência alta alerta, não escolhe a mais permissiva |
+| Dados | Treinamento desabilitado, retenção mínima, região aprovada, DLP antes do envio |
+| Composição | Etapa separada; histórico livre continua proibido |
+
+Copilot Studio AI prompts podem implementar o provedor `microsoft_copilot` somente se o JSON for revalidado no adapter contra o mesmo schema. O formato auto-detectado do Studio **não** substitui o JSON Schema versionado. A etapa de composição não reutiliza o mesmo prompt de NLU.
+
+### Clarificação
+
+A conversa guarda um slot pendente versionado (`pendingClarification`), não um chat livre para a LLM.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> PENDING: needsClarification
+    PENDING --> RESUME: clarification_response válida
+    PENDING --> IDLE: nova intenção cancela o slot
+    PENDING --> IDLE: TTL de sessão expirado
+    RESUME --> IDLE: resolução 1 candidato ou recusa
+```
+
+| Código | Pergunta ao RTV | Retomada |
+| --- | --- | --- |
+| `MISSING_CUSTOMER` | Qual cliente? | Nova menção → resolução |
+| `AMBIGUOUS_CUSTOMER` | Lista curta da carteira | `clarification_response` com índice ou nome |
+| `MISSING_AMOUNT` | Qual valor do pedido a checar? | Parser + NLU |
+| `AMBIGUOUS_AMOUNT` | Confirmar o valor em reais | Parser |
+| `LOW_CONFIDENCE` | Reformular o pedido | Nova interpretação |
+| `NLU_REJECTED` / `NLU_TIMEOUT` | Não entendi; oferecer opções do catálogo | Sem fan-out |
+
+Timeout de slot segue o TTL de sessão. Mensagem nova que muda de intenção cancela o slot e reinterpreta.
+
+### Exemplo: Hommerson Agro, R$ 1 milhão
+
+Utterance:
+
+```text
+Preciso de uma análise de crédito para o cliente Hommerson Agro para ver se ele consegue fazer um pedido de 1milhão.
+```
+
+```mermaid
+sequenceDiagram
+    participant U as RTV no WhatsApp
+    participant N as nina-nlu
+    participant P as Parser pt-BR
+    participant L as Adapter Copilot/OpenAI
+    participant D as Digibee
+    participant K as Tarken
+    participant T as TOTVS
+    participant R as Renderer
+
+    U->>N: Evento canônico autorizado
+    N->>N: ABAC de conversa
+    N->>P: 1milhão
+    P-->>N: 100000000 BRL
+    N->>L: interpret_utterance
+    L-->>N: credit_analysis + Hommerson Agro
+    N->>D: resolve_customer_mention na carteira
+    alt Fora da carteira
+        D-->>N: 0 candidatos
+        N-->>U: FORBIDDEN genérico sem Tarken
+    else AAL insuficiente
+        N-->>U: STEP_UP_REQUIRED
+    else Autorizado
+        D->>K: limite e disponibilidade
+        D->>T: títulos
+        D->>R: CREDIT_* + OVERDUE_TITLES
+        R-->>U: Fatos lastreados, sem aprovacao
+    end
+```
+
+| Passo | Componente | Resultado arquitetural |
+| --- | --- | --- |
+| 1 | Sessão + ABAC de conversa | RTV autenticado pode usar a Nina neste canal |
+| 2 | Parser | `1milhão` → `100000000` BRL |
+| 3 | NLU | `credit_analysis`, menção `Hommerson Agro`, tópicos de limite/títulos |
+| 4 | Resolução | Somente carteira do `rtvId` de servidor |
+| 5 | Fora da carteira | Resposta genérica, evento de segurança, **nenhuma** chamada Tarken |
+| 6 | AAL financeiro insuficiente | Step-up, sem consultar crédito |
+| 7 | Autorizado | Tarken e TOTVS em paralelo, com deadlines e freshness de 5 min |
+| 8 | Insights | `CREDIT_INSUFFICIENT` ou `CREDIT_SUFFICIENT_FOR_AMOUNT`; reuso de `OVERDUE_TITLES` / `CREDIT_NEAR_LIMIT` |
+| 9 | Composição | Renderer determinístico com `asOf`; sem frase do tipo “está aprovado” |
+
+A comparação `requestedOrderAmount` versus limite disponível só ocorre com bloco Tarken `SUCCESS` dentro da janela. Esses códigos não são aprovação de crédito.
+
 ## Orquestração e contratos de intenção
 
-A interpretação do WhatsApp não usa o Copilot Studio como fonte de verdade. O runtime `nina-nlu` classifica a utterance contra o catálogo `intents-v1`, devolve menções não confiáveis e só então o Digibee resolve cliente ou pedido na carteira do RTV. Detalhes, guardrails de injeção e o exemplo “Hommerson Agro / 1 milhão” estão em [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md).
+O runtime `nina-nlu` classifica a utterance contra o catálogo `intents-v1` e devolve menções não confiáveis. O Digibee resolve cliente ou pedido na carteira e só então constrói as chamadas. A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanecem no envelope. IDs de cliente, `rtvId` e códigos emitidos pelo modelo são descartados.
 
-A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanecem no envelope. IDs de cliente, `rtvId` e códigos emitidos pelo modelo são descartados.
+O envelope abaixo é o evento pós-validação enviado à orquestração, não a saída crua do modelo:
 
 ```json
 {
@@ -287,8 +641,9 @@ sequenceDiagram
     Q->>Q: OIDC/MFA, vínculo telefone-RTV e ABAC
     Q->>O: ticket-create:{eventId}
     Q->>N: Evento canônico
-    N->>D: order_query + delivery_eta + entidades
-    D->>L: Resolver cadastro pelo nome
+    N->>N: NLU: order_query + delivery_eta + menções
+    N->>D: Resolver Fazenda Esperança na carteira
+    D->>L: Cadastro filtrado pelo rtvId de servidor
     D->>T: Carteira vigente e último pedido autorizado
     D->>G: ETA/tracking
     D->>R: Consolidado versionado com proveniência
@@ -331,19 +686,24 @@ Sem sessão OIDC válida, o fluxo interrompe e o WhatsApp recebe apenas o link d
 
 ### 2. Intenção extraída pela Nina
 
+A NLU devolve menções, não identidade. `LAST` é um seletor de pedido, não um `orderNumber` autorizado.
+
 ```json
 {
   "schemaVersion": "1.0.0",
   "intent": "order_query",
   "requestedTopics": ["delivery_eta"],
-  "entities": {
-    "customerName": "Fazenda Esperança",
+  "mentions": {
+    "customer": {
+      "raw": "Fazenda Esperança",
+      "type": "CUSTOMER_NAME"
+    },
     "orderSelector": "LAST"
   }
 }
 ```
 
-`customerName` e `orderSelector` não autorizam nada. O gateway acrescenta o contexto interno derivado das claims (`subjectId`, `rtvId`, tenant, AAL, finalidade). Esse bloco não volta para o modelo e não é aceito da LLM.
+`mentions.customer.raw` e `orderSelector` não autorizam nada. O gateway resolve o cliente na carteira, escolhe o último pedido autorizado e acrescenta o contexto interno derivado das claims (`subjectId`, `rtvId`, tenant, AAL, finalidade). Esse bloco não volta para o modelo e não é aceito da LLM.
 
 Consulta de pedido e entrega exige AAL2 e a regra ABAC completa, avaliada **antes** do fan-out:
 
