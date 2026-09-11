@@ -114,7 +114,7 @@ sequenceDiagram
     N->>D: Intenção + entidades não confiáveis
 ```
 
-O `200` não declara conclusão do negócio. Payload inválido ou assinatura incorreta é rejeitado sem persistência; indisponibilidade da inbox não recebe ACK de sucesso.
+O `200` não declara conclusão do negócio. Payload inválido ou assinatura incorreta é rejeitado sem persistência; indisponibilidade da inbox não recebe ACK de sucesso. O exemplo ponta a ponta com cliente por nome, último pedido e ETA está em [Fluxo: estimativa de entrega do último pedido](#fluxo-estimativa-de-entrega-do-último-pedido).
 
 ### Evento canônico do adapter para a Nina
 
@@ -233,6 +233,152 @@ A LLM retorna uma intenção principal e `requestedTopics[]`. Metadados permanec
 | `order_create` | Rascunho confirmado, MFA e versão | — | Autorização em tempo real | Não executar | Consultar por `operationId` | Não permitido |
 
 `FORBIDDEN` nunca vira `NOT_FOUND` detalhado nem expõe existência do recurso. Gera resposta genérica e evento de segurança.
+
+## Fluxo: estimativa de entrega do último pedido
+
+Pergunta típica no WhatsApp:
+
+> Quero saber a estimativa de entrega do último pedido do cliente Fazenda Esperança
+
+Não há `orderNumber`. A Nina extrai intenção e entidades não confiáveis; o Digibee resolve cliente, carteira, último pedido e ETA no servidor. O `200` do webhook só confirma persistência na inbox; a resposta ao RTV sai depois, pela outbox.
+
+```mermaid
+sequenceDiagram
+    participant U as RTV no WhatsApp
+    participant A as Adapter Digibee
+    participant I as Inbox durável
+    participant Q as Consumidor serial
+    participant N as Nina
+    participant D as Digibee
+    participant L as Lecom
+    participant T as TOTVS Datasul
+    participant G as LoogAI
+    participant R as Renderer validador
+    participant O as Outbox
+    participant W as WhatsApp
+    participant S as ITSM
+
+    U->>A: POST webhook (envelope nativo)
+    A->>A: Limite + assinatura nos bytes originais
+    A->>I: INSERT UNIQUE provider,messageId
+    A-->>U: 200 OK
+    I->>Q: Evento canônico por conversationId
+    Q->>Q: OIDC/MFA, vínculo telefone-RTV e ABAC
+    Q->>O: ticket-create:{eventId}
+    Q->>N: Evento canônico
+    N->>D: order_query + delivery_eta + entidades
+    D->>L: Resolver cadastro pelo nome
+    D->>T: Carteira vigente e último pedido autorizado
+    D->>G: ETA/tracking
+    D->>R: Consolidado versionado com proveniência
+    R->>O: OUTBOUND_ACCEPTED
+    par Efeitos independentes
+        O->>W: whatsapp-send:{outboundCommandId}
+        O->>S: ticket-comment:{eventId}
+    end
+    W-->>O: ACCEPTED / DELIVERED / READ / FAILED
+```
+
+### 1. Entrada e evento canônico
+
+O adapter valida o envelope nativo, persiste o evento e devolve `200`. O telefone permanece no cofre de identidade. O texto segue tokenizado:
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "eventId": "evt_01J...",
+  "traceId": "trc_01J...",
+  "conversationId": "cnv_01J...",
+  "conversationSequence": 14,
+  "conversationVersion": 8,
+  "causationId": "evt_01J_previous",
+  "messageId": "wamid.HBgL...",
+  "occurredAt": "2026-09-10T01:40:00Z",
+  "channel": "whatsapp",
+  "input": {
+    "type": "text",
+    "text": "Quero saber a estimativa de entrega do ultimo pedido do cliente Fazenda Esperança"
+  },
+  "ticket": {
+    "ticketId": null,
+    "ticketLinkStatus": "PENDING"
+  }
+}
+```
+
+Sem sessão OIDC válida, o fluxo interrompe e o WhatsApp recebe apenas o link de autenticação. A conversa não espera o ITSM: `ticketLinkStatus` pode permanecer `PENDING` ou `UNAVAILABLE`.
+
+### 2. Intenção extraída pela Nina
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "intent": "order_query",
+  "requestedTopics": ["delivery_eta"],
+  "entities": {
+    "customerName": "Fazenda Esperança",
+    "orderSelector": "LAST"
+  }
+}
+```
+
+`customerName` e `orderSelector` não autorizam nada. O gateway acrescenta o contexto interno derivado das claims (`subjectId`, `rtvId`, tenant, AAL, finalidade). Esse bloco não volta para o modelo e não é aceito da LLM.
+
+Consulta de pedido e entrega exige AAL2 e a regra ABAC completa, avaliada **antes** do fan-out:
+
+```text
+subject autenticado
+AND ação permitida
+AND cliente pertence à carteira vigente
+AND pedido pertence a cliente autorizado
+AND finalidade autorizada
+AND nível de autenticação suficiente
+```
+
+### 3. Resolução no Digibee
+
+| Passo | Fonte | Responsabilidade |
+| --- | --- | --- |
+| Resolver o cliente pelo nome | Lecom | Cadastro fiscal; nome ambíguo não gera match inventado |
+| Autorizar a carteira | TOTVS/Datasul | Cliente na carteira vigente do RTV; Lecom não amplia autorização |
+| Selecionar o último pedido | TOTVS | Pedido integrado mais recente **autorizado**; Portal só durante captura |
+| Obter a estimativa de entrega | LoogAI | Tracking/ETA; faturamento permanece no TOTVS |
+
+Freshness desta intenção: pedido 5 min; ETA 15 min. Cada bloco consolidado inclui `source`, `sourceUpdatedAt`, `observedAt`, `version` e `staleness`. Dados fora da janela são omitidos ou marcados `STALE`.
+
+| Resultado | Tratamento no WhatsApp |
+| --- | --- |
+| Cliente/pedido autorizado e ETA fresco | Responder com fatos lastreados |
+| Nome irresolúvel ou ambíguo | Não inventar cliente; handoff se a política da intenção exigir |
+| `NOT_FOUND` | Informar ausência sem revelar o cliente |
+| `FORBIDDEN` | Resposta genérica e evento de segurança; não expor existência nem carteira |
+| `TIMEOUT` / `STALE` da LoogAI | Omitir `delivery_eta` e sinalizar indisponibilidade |
+| Pedido ok e ETA indisponível | `PARTIAL_SUCCESS`: só tópicos válidos |
+
+### 4. Composição e envio
+
+Fatos preferem template determinístico. Se houver LLM, cada segmento exige `sourceField`; o validador rejeita nome, número ou data ausentes no consolidado. Recusa ou falha usa o renderer. DLP classifica o payload como `COMMERCIAL_CONFIDENTIAL` antes de WhatsApp, ITSM e OpenAI.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "message": {
+    "segments": [
+      {
+        "text": "O último pedido autorizado está liberado.",
+        "sourceField": "$.pedido.data.statusErp"
+      },
+      {
+        "text": "A previsão de entrega é 2026-09-10.",
+        "sourceField": "$.logistica.previsaoEntrega"
+      }
+    ]
+  },
+  "dataClasses": ["COMMERCIAL_CONFIDENTIAL"]
+}
+```
+
+ITSM e WhatsApp são efeitos independentes da outbox (`ticket-comment:{eventId}` e `whatsapp-send:{outboundCommandId}`). Falha de ITSM não bloqueia o envio. O ticket só entra em `WAITING_USER` no marco `DELIVERED`. Resposta cuja `conversationVersion` já foi superada recebe `STALE` e não é enviada.
 
 ## Fonte de verdade e consistência temporal
 
