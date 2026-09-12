@@ -1,108 +1,104 @@
-**RTVgpt — Governança e Proteção de Dados**
+# RTVgpt — Governança, LGPD e Conformidade com a Arquitetura
 
-*Texto pronto para os itens 4 (Governança, Indicadores e Valor) e parte do item 3 (riscos de integração, segurança e LGPD) do Tech Challenge*
+Este documento consolida governança, riscos e indicadores do RTVgpt em conformidade com a arquitetura de referência do projeto: Digibee como hub obrigatório, aceite assíncrono com inbox/outbox duráveis, `conversationId` como identidade da conversa, Nina com NLU de catálogo fechado e controles de identidade/ABAC no servidor.
 
-O texto abaixo já está redigido para ser incorporado ao PDF final do Tech Challenge, cobrindo especificamente o item "4. Governança, Indicadores e Valor para o Negócio" e o bloco de riscos de segurança/LGPD exigido dentro do item 3 ("Arquitetura de Integração, Dados e IA"). Ele parte da arquitetura já pivotada do grupo — RTV no WhatsApp, atendido pela Nina, com escalonamento para atendimento humano via Microsoft Teams nos casos que exigem julgamento (crédito, exceções de logística) — e incorpora o que foi validado na mentoria com o Alisson (Nina, Digibee, Tarken, Jornada do RTV, escopo agro Brasil).
+Fontes de referência: `README.md`, `docs/detalhes-tecnicos-integracoes.md`, `docs/riscos-integracao.md`, `docs/validacao-rtv-cpf.md` e `docs/interpretacao-nina.md`.
 
-# **4\. Governança, Indicadores e Valor para o Negócio**
+## 1. Princípios de governança obrigatórios
 
-## **4.1 Dados críticos por domínio da jornada do RTV**
+1. Toda operação de negócio passa pelo Digibee; não há fan-out direto da LLM para sistemas de origem.
+2. O `200 OK` do webhook confirma somente validação + persistência durável na inbox.
+3. `conversationId` é obrigatório; `ticketId` é opcional e tratado como projeção operacional.
+4. Identidade, `rtvId`, tenant, carteira e destinatário são derivados no servidor; nunca aceitos da LLM.
+5. Outbox durável e `operationId` garantem idempotência e reconciliação entre ITSM, WhatsApp e Teams.
+6. A LLM é não confiável: intenção e menções são hipóteses; fatos finais só saem de fontes versionadas.
+7. DLP e minimização são aplicados antes de OpenAI, Teams, ITSM e WhatsApp.
 
-A camada WhatsApp → Nina não cria dados novos: ela consolida, para o RTV, dados que já existem em sistemas especialistas. A tabela abaixo mapeia, por domínio, qual dado é crítico para o fluxo e de onde ele deve vir — distinção importante porque nem toda fonte é confiável para responder em tempo real (ver seção 4.5).
+## 2. Domínios de dados, ownership e fonte de verdade
 
-| Domínio | Dado crítico | Sistema de origem | Uso no fluxo WhatsApp → Nina |
-| :---- | :---- | :---- | :---- |
-| Cadastro do cliente | Razão social, CNPJ, contatos, endereço | Lecom, replicado no Totvs/Datasul | Identificar o cliente citado pelo RTV na conversa |
-| Pedido | Status (aberto/faturado/produção/aguardando crédito/cancelado), motivo de pendência (frete, natureza de operação), previsão de entrega | Portal de Pedidos / Totvs-Datasul, via Digibee | Responder "em que etapa está meu pedido" |
-| Crédito | Pré-crédito aprovado, saldo utilizado, faturas em atraso, status de bloqueio | Tarken — status via Digibee (tempo real); liberação plena via chamado | Responder "posso vender mais" e decidir se escala para Teams |
-| Entrega / Logística | Status de envio, previsão de entrega, risco de atraso, composição de carga | LoogAI | Responder dúvidas de entrega |
-| Atendimento / Suporte | Histórico de chamados, status, SLA da área responsável, motivo | Nina / ITSM | Abrir ou consultar chamado e decidir o transbordo |
+| Domínio | Fonte de verdade | Dono do domínio | Regra de governança |
+| --- | --- | --- | --- |
+| Identidade RTV e vínculo telefone | IAM corporativo + cofre de canal | Segurança/IAM | OIDC + PKCE + MFA, sessão curta e revogação por mudança de vínculo |
+| Carteira vigente | TOTVS/Datasul | Comercial + ERP | ABAC exige carteira vigente antes de qualquer consulta de cliente/pedido |
+| Cadastro fiscal | Lecom (por campo) | Master Data | Lecom complementa, mas não expande autorização da carteira |
+| Crédito e limite | Tarken (crédito) + TOTVS (títulos) | Crédito | Consulta assistida; não representa aprovação automática de pedido |
+| Pedido integrado | TOTVS/Datasul | Comercial + ERP | Portal é auxiliar durante captura; pós-integração vale TOTVS |
+| ETA/logística | LoogAI | Logística | ETA é independente do status financeiro/comercial |
+| Conversa e auditoria | Event store/auditoria imutável | Arquitetura + Segurança | ITSM não é trilha primária de auditoria |
 
-## **4.2 Donos dos dados — quem responde pela qualidade e atualização**
+## 3. Segurança e LGPD por desenho
 
-| Domínio de dado | Área responsável | Observação |
-| :---- | :---- | :---- |
-| Cadastro do cliente | Time de Master Data / Cadastro (aprovação no Lecom) | Endereço e razão social já vêm automatizados por integração com a Receita Federal, reduzindo erro de digitação |
-| Pedido | Time Comercial / donos do Portal de Pedidos | O Totvs/Datasul é a fonte de verdade; se um relatório de BI divergir, a correção é no relatório, não no banco |
-| Crédito | Time de Crédito / Copernitro (donos do Tarken) | Pré-crédito já é automatizado; a liberação plena continua sob responsabilidade humana |
-| Entrega / Logística | Time de Logística / donos do LoogAI | — |
-| Atendimento / Suporte (Nina) | Time de TI Digital / donos da Nina e do ITSM | Passa a responder também pela integração WhatsApp ↔ Nina |
-| Integração (Digibee) e novo canal WhatsApp | Time de Arquitetura / Integração | Recomenda-se que este time assuma também a governança do catálogo de ferramentas que a Nina passa a acionar |
+### 3.1 Identidade, sessão e autorização
 
-Recomenda-se instituir um fórum leve de governança — um "Comitê do RTV Experience Hub", com representantes de crédito, logística, comercial e TI, revisando trimestralmente os indicadores da seção 4.3 e os incidentes de dado divergente da seção 4.5. Isso evita que a nova camada vire mais um sistema sem dono claro, repetindo o problema que a própria dor do RTV descreve hoje.
+- Autenticação: OIDC Authorization Code + PKCE + MFA.
+- Sessão: escopo por `tenantId + environment + conversationId + subjectId`.
+- ABAC: sujeito autenticado + ação permitida + cliente/pedido na carteira + finalidade + nível de autenticação.
+- Step-up: obrigatório para crédito, dados financeiros e mutações.
+- Prefixo de CPF: apenas sinal antifraude; não autentica nem autoriza.
 
-## **4.3 Indicadores que medem produtividade, experiência e valor comercial**
+### 3.2 Minimização e classificação de dados
 
-| Indicador | O que mede | Baseline (levantado na mentoria) | Meta do MVP |
-| :---- | :---- | :---- | :---- |
-| Nº de sistemas acessados por atendimento | Fricção operacional | 4 sistemas hoje (Lecom, Portal, Tarken, LoogAI) navegados separadamente | 1 (WhatsApp/Nina) |
-| Taxa de resolução via self-service (sem transbordo) | Eficácia do agente | Não medido hoje; o bot atual (Blip) depende de menu e gera muitos transbordos | ≥ 60% das interações resolvidas sem transbordo para Teams |
-| Taxa de roteamento correto na primeira tentativa | Ataca a dor nº 1 citada pela Nitro: o RTV não sabe a quem recorrer | Baixa hoje — reencaminhamentos sucessivos são a principal reclamação | ≥ 90% direcionados corretamente já na primeira tentativa |
-| Tempo até resposta útil | Experiência do RTV | SLA por área: 2 a 4 horas quando o roteamento é correto | \< 2 min para consultas de self-service; manter o SLA da área para os casos escalonados |
-| Volume de solicitações por frete / natureza de operação / crédito | Dimensiona o problema operacional | 20 a 30 por dia entre 130 RTVs | Redução de 40–60% dos casos que hoje geram chamado, via autoatendimento |
-| Adesão dos RTVs ao novo canal | Adoção | 0% (RTVs não usam a Nina hoje, por estar no Teams) | ≥ 70% dos RTVs do piloto usando o canal WhatsApp ativamente |
-| Precisão da resposta do agente (auditoria por amostragem) | Confiabilidade | N/A | ≥ 95% |
-| Taxa de mensagens dentro da janela de 24h do WhatsApp | Saúde técnica do canal | N/A — gap conhecido da Nina atual (sem aviso proativo de chamado resolvido) | Monitorar continuamente; usar templates aprovados quando fora da janela |
+| Classe | Exemplos | Política |
+| --- | --- | --- |
+| `PERSONAL_IDENTIFIER` | CPF/CNPJ, telefone, nome | Tokenização/mascaração conforme finalidade |
+| `COMMERCIAL_CONFIDENTIAL` | pedido, condições comerciais | Menor conjunto necessário e ACL restritiva |
+| `FINANCIAL_PROFILE` | limite, score, títulos | Step-up, destino restrito e mascaramento reforçado |
+| `SECURITY_EVIDENCE` | sinais de fraude/injeção | Trilha segregada; não expor em WhatsApp/ITSM público |
 
-## **4.4 Como acompanhar redução de tempo, retrabalho e nº de sistemas acessados**
+### 3.3 Requisitos formais LGPD
 
-* Cada interação deve gerar um registro estruturado (RTV, cliente, sistemas/ferramentas acionadas, houve ou não transbordo, tempo até resposta) — a mesma trilha de auditoria da seção de segurança serve de fonte para os indicadores, evitando duas instrumentações separadas.
+- Inventário de tratamento com finalidade e base legal por fluxo.
+- RIPD para uso de WhatsApp + provedores LLM.
+- Contratos de operador (DPA) com provedores de canal e IA.
+- Retenção, descarte e exclusão propagada definidos e testados.
+- Controles de transferência internacional e retenção mínima.
+- Revisão humana para decisões automatizadas materialmente relevantes.
 
-* Usar o Reportload — o BI que os RTVs já conhecem — como vitrine dos indicadores de governança, em vez de introduzir mais uma ferramenta que eles resistem a adotar (lição já observada com o próprio Reportload e antes com relatórios automáticos de comissão).
+## 4. Riscos técnicos e controles mandatórios
 
-* Comparar mensalmente contra a baseline hoje registrada na Blip (20-30 solicitações/dia, tempo de resposta por área) para demonstrar de forma objetiva a redução de retrabalho e fricção.
+| Risco | Impacto | Controle arquitetural |
+| --- | --- | --- |
+| Reentrega/duplicidade de webhook | Duplicação de efeitos | Inbox com unicidade de `messageId`, lease, fencing e CAS |
+| Corrida entre sistemas externos | Estado divergente | Outbox por efeito + reconciliação por `operationId` |
+| Cliente fora da carteira receber resposta | Vazamento/IDOR | Resolução na carteira + resposta `FORBIDDEN` genérica |
+| LLM inventar `customerId`/`rtvId` | Acesso indevido | IDs da LLM descartados; identidade só do servidor |
+| Resposta fora de ordem | Regressão de estado | Sequência e versão da conversa; respostas `STALE` não enviadas |
+| Falha de ITSM bloquear conversa | Paralisação operacional | ITSM como projeção; conversa segue com `ticketLinkStatus` |
+| Valor monetário ambíguo (ex.: `1,000`) | Decisão errada de crédito | Parser `pt-BR` + clarificação obrigatória |
+| Janela de 24h WhatsApp | Falha de notificação proativa | Templates aprovados e política de envio fora da janela |
 
-## **4.5 Riscos se os dados forem divergentes, incompletos ou desatualizados**
+## 5. Indicadores de governança e valor
 
-* **Fonte de verdade mal definida:** já ocorreu na Nitro divergência entre um relatório de BI e o sistema de origem por um status mal mapeado no relatório. Nesses casos a correção é no relatório, nunca no banco — a governança deve deixar isso explícito: Totvs/Datasul (e o Tarken, quando aplicável) são a fonte de verdade, nunca uma réplica de BI.
+### 5.1 Indicadores operacionais e de segurança
 
-* **Dado desatualizado por delay de plataforma:** o Databricks atualiza de horas a um dia; nunca deve alimentar respostas de tempo real do agente (ex.: "esse pedido foi aprovado agora?"). Somente o Digibee, que consulta ao vivo, deve alimentar respostas críticas de status.
+- Latência de ACK pós-persistência da inbox.
+- Backlog e idade máxima de inbox/outbox.
+- Taxa de duplicatas rejeitadas e de eventos `STALE`.
+- Taxa de `FORBIDDEN`, `STEP_UP_REQUIRED`, `NLU_REJECTED` e `NLU_TIMEOUT`.
+- Divergência entre estados ITSM e WhatsApp até reconciliação.
+- Handoffs Teams por idade/estado (`QUEUED`, `ASSIGNED`, `REPLIED`, `CLOSED`).
 
-* **Identificação divergente do cliente entre sistemas:** Lecom e Totvs usam o mesmo código, mas o Tarken às vezes é referenciado por CNPJ. A integração deve sempre confirmar a identidade do cliente antes de expor qualquer dado sensível, para não responder sobre o cliente errado.
+### 5.2 Indicadores de experiência e negócio
 
-* **Risco mais crítico — bloqueio de crédito desatualizado:** se o dado de inadimplência não estiver em tempo real, o RTV pode vender para um cliente já bloqueado. Por isso toda resposta sobre crédito deve ser tratada como recomendação, citando fonte e horário da consulta, e o MVP precisa garantir que esse dado específico vem sempre do Digibee em tempo real, nunca de cache ou de uma réplica.
+- Percentual de interações resolvidas sem handoff humano.
+- Tempo até primeira resposta útil por intenção.
+- Redução de retrabalho por consultas repetidas de pedido/crédito.
+- Taxa de roteamento correto na primeira tentativa.
+- Adoção do canal WhatsApp pelos RTVs no piloto.
+- Precisão factual da resposta (amostragem com validação por `sourceField`).
 
-# **3.1. Riscos de Segurança, LGPD e Qualidade de Dados na Integração WhatsApp → Nina → Sistemas**
+## 6. Critérios mínimos de conformidade para produção
 
-Este bloco atende diretamente ao item 3 do desafio ("quais riscos técnicos existem em integração, segurança, LGPD e qualidade dos dados"), com foco no que muda ao trocar o canal de Teams para WhatsApp.
+1. Inbox/outbox duráveis com testes de concorrência, replay e reconciliação.
+2. ABAC aplicado antes do fan-out e reforçado nas fontes quando possível.
+3. NLU de catálogo fechado (`intents-v1`) com schema estrito e sem orquestração generativa de sistemas corporativos.
+4. Resolução de cliente/pedido somente na carteira vigente do RTV autenticado.
+5. Composição factual determinística ou LLM validada por `sourceField`.
+6. Callback de handoff Teams autenticado, autorizado, idempotente e não repetível.
+7. DLP ativo em todas as fronteiras e auditoria imutável segregada do ITSM.
+8. Evidência formal de RIPD, retenção, descarte e exclusão propagada.
 
-## **3.1.1 Por que o WhatsApp exige atenção redobrada em relação à Nina no Teams**
+## 7. Decisão de governança
 
-A Nina, restrita ao Teams, operava inteiramente dentro do perímetro corporativo Microsoft da Nitro. Ao abrir a Nina para o WhatsApp, entram novos elementos de risco: o número de telefone como identificador pessoal, a infraestrutura de um provedor de canal (Blip hoje, ou o canal nativo do Copilot Studio) como intermediário no tratamento das mensagens, e a janela de 24 horas do WhatsApp Business (Meta), que já se mostrou um problema real — é o motivo pelo qual a Nina hoje não consegue avisar proativamente o RTV quando um chamado é resolvido.
-
-## **3.1.2 Novos dados e atores envolvidos com a entrada do WhatsApp**
-
-| Elemento | O que é | Cuidado de segurança / LGPD |
-| :---- | :---- | :---- |
-| Número de telefone do RTV | Dado pessoal, usado como identificador de sessão | Deve estar vinculado ao cadastro corporativo do RTV mantido pela "Jornada do RTV", para que a troca de número não exponha dados a uma pessoa errada |
-| Conteúdo das mensagens (pergunta e resposta) | Pode conter dados de crédito, pedidos e do cliente final | Trafega por infraestrutura de terceiro (Meta / provedor do canal) — mapear onde fica armazenado e por quanto tempo |
-| Templates de notificação (mensagens ativas) | Usados quando a janela de 24h expira | Não devem trazer dado sensível no texto (valor de dívida, nome de cliente); usar mensagem genérica que direcione a uma consulta segura dentro do fluxo |
-| Provedor do canal WhatsApp (Blip hoje, ou canal nativo do Copilot Studio) | Operador de dados pessoais na cadeia | Precisa de contrato de tratamento de dados (DPA), no mesmo padrão já exigido para o Digibee e para o fornecedor do modelo de IA |
-
-## **3.1.3 Riscos técnicos herdados da arquitetura atual (confirmados na mentoria)**
-
-* **Consulta direta ao banco Oracle via Digibee, sem API formal:** funciona hoje sem histórico de falha, mas qualquer mudança de schema no Totvs/Datasul quebra a integração sem aviso. Recomenda-se monitoramento ativo e testes de regressão sempre que o ERP for atualizado.
-
-* **Janela de 24h do WhatsApp Business:** já é um gap conhecido da Nina atual. A nova solução precisa tratar isso explicitamente com mensagens de template pré-aprovadas pela Meta, e não deve prometer notificação proativa sem esse desenho.
-
-* **Acesso indireto ao Tarken:** o licenciamento por usuário inviabiliza acesso direto dos 130 RTVs. Isso reforça que a liberação plena de crédito deve continuar como fluxo assistido por humano (chamado), nunca uma promessa de decisão automática.
-
-## **3.1.4 Controles propostos**
-
-* **Autenticação e identidade:** vincular o número de WhatsApp do RTV ao cadastro corporativo já mantido pela "Jornada do RTV" — o mesmo processo que hoje cria e revoga acesso a e-mail e ao Portal de Pedidos — garantindo que só RTVs ativos interajam com a Nina por esse canal, com atualização automática no desligamento.
-
-* **Privilégio mínimo:** manter, para a nova camada, o mesmo padrão já usado hoje no Digibee — usuário técnico somente leitura, restrito às tabelas necessárias — e aplicar o mesmo princípio a qualquer nova ferramenta exposta à Nina (ex.: consulta de crédito).
-
-* **Minimização de dado exposto:** a resposta da Nina no WhatsApp deve trazer o resumo necessário (ex.: "bloqueado por inadimplência"), nunca o extrato financeiro completo do cliente.
-
-* **Rótulo de recomendação:** toda resposta envolvendo crédito deve indicar que é uma consulta de status, não uma decisão automática de liberação — mantendo o time de crédito no controle final, como já ocorre hoje.
-
-* **Trilha de auditoria:** registrar cada interação (RTV, cliente consultado, dado retornado, se houve transbordo para Teams) — o mesmo registro alimenta tanto a segurança quanto os indicadores de governança da seção 4\.
-
-* **Contratos de tratamento de dados (DPA):** formalizar com o provedor do canal WhatsApp (Blip ou o canal nativo do Copilot Studio, se adotado) e com o provedor do modelo de IA, definindo finalidade, retenção e proibição de uso dos dados para treinar modelos de terceiros.
-
-* **Avaliação de impacto (RIPD/DPIA):** recomenda-se uma avaliação específica antes de abrir o canal WhatsApp para dados de crédito, já que esse canal envolve atores (Meta / provedor do canal) que a Nina, restrita ao Teams, não tinha.
-
-| Por que isso resolve o problema real observado pela Nitro Esse desenho ataca diretamente os dois gaps que a própria equipe da Nitro relatou na mentoria: (1) a Nina não conseguia notificar o RTV proativamente pelo WhatsApp por causa da janela de 24h — resolvido com mensagens de template; e (2) o RTV não tinha um canal natural para tratar crédito — resolvido reaproveitando a integração Nina↔Tarken já existente, apenas estendendo o canal de entrada para o WhatsApp em vez do Teams. |
-| :---- |
+Com base na arquitetura vigente, o RTVgpt deve operar como uma camada de orquestração segura e auditável, não como um agente autônomo de decisão. O desenho aprovado combina produtividade (autoatendimento no WhatsApp), controle de risco (ABAC + step-up + DLP) e conformidade LGPD (minimização, rastreabilidade e gestão de ciclo de vida dos dados), preservando o Digibee e os sistemas de origem como autoridade de negócio.
 
