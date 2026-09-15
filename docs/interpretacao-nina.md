@@ -4,7 +4,7 @@ A Nina existente no Teams foi construída com Microsoft Copilot Studio. Esse age
 
 Este documento define o runtime de interpretação: um classificador de catálogo fechado, extração de menções não confiáveis, resolução de entidades na carteira do RTV e só então as consultas Digibee já previstas na arquitetura. Os provedores de LLM são Microsoft Copilot (Azure OpenAI / Microsoft Foundry) e OpenAI, atrás do mesmo adapter interno.
 
-Complementa [`README.md`](../README.md), [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md), [`validacao-rtv-cpf.md`](validacao-rtv-cpf.md) e [`riscos-integracao.md`](riscos-integracao.md). O plano de entrega está em [`plano-implementacao-interpretacao-nina.md`](plano-implementacao-interpretacao-nina.md).
+Complementa [`README.md`](../README.md), [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md), [`validacao-rtv-cpf.md`](validacao-rtv-cpf.md), [`riscos-integracao.md`](riscos-integracao.md) e [`preparacao-visita.md`](preparacao-visita.md). O plano de entrega está em [`plano-implementacao-interpretacao-nina.md`](plano-implementacao-interpretacao-nina.md).
 
 ## Objetivos
 
@@ -97,7 +97,8 @@ Envelope interno, distinto do request nativo de Copilot ou OpenAI:
       }
     ],
     "orderNumbers": [],
-    "taxIds": []
+    "taxIds": [],
+    "dates": []
   },
   "pendingClarification": null
 }
@@ -149,7 +150,7 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | --- | --- | --- | --- | --- |
 | `credit_analysis` | Limite, score, “cabe um pedido de X”, análise de crédito | `credit_limit`, `credit_available`, `credit_check_amount`, `overdue_titles` | Tarken + títulos TOTVS | Não |
 | `order_query` | Status, entrega, itens de um pedido | `delivery_eta`, `credit_limit`, `order_status` | TOTVS, LoogAI, crédito só se pedido | Sim, por tópico |
-| `visit_preparation` | Briefing de visita | visitas, pedidos, crédito, logística | Consolidado já especificado | Sim |
+| `visit_preparation` | Briefing de visita | `last_visit`, `visit_notes`, `order_history` (núcleo); `credit_limit`, `overdue_titles`, `delivery_eta` (opcional) | TOTVS visitas/anotações/pedidos; Tarken e LoogAI só se AAL e tópico | Sim |
 | `customer_lookup` | Cadastro básico autorizado | cadastro | Lecom/TOTVS cadastral | Sim |
 | `customer_update` | Alterar cadastro | campos declarados | Mutação com MFA | Não |
 | `order_create` | Criar pedido | rascunho | Outbox após confirmação | Não |
@@ -176,6 +177,14 @@ Insights adicionais:
 
 Esses códigos não são aprovação de crédito.
 
+### Matriz mínima de `visit_preparation`
+
+| Resultado | Obrigatório | Freshness | `NOT_FOUND` / 0 na carteira | `TIMEOUT` / `STALE` | `FORBIDDEN` |
+| --- | --- | --- | --- | --- | --- |
+| Relatório de visita | Cliente na carteira + AAL2 | Cadastro 24 h; visitas/pedidos 15 min | Fora da carteira: resposta genérica; sem menção: clarificação | Omitir bloco; não inventar última visita nem pedido | Resposta genérica e evento de segurança |
+
+Tópicos nucleares: `last_visit`, `visit_notes`, `order_history`. Crédito e logística são opcionais e dependem de AAL financeiro / disponibilidade da origem. `PARTIAL_SUCCESS` é permitido. Detalhe do fan-out, DLP de anotações e texto do WhatsApp: [`preparacao-visita.md`](preparacao-visita.md).
+
 ## Extração híbrida
 
 | Sinal | Método | Exemplo |
@@ -184,7 +193,7 @@ Esses códigos não são aprovação de crédito.
 | Número de pedido | Regex de catálogo | `12345`, `pedido 12345` |
 | CNPJ/CPF | Detector; tokenização imediata | nunca enviado completo ao modelo nem ao WhatsApp |
 | Nome de cliente | LLM + busca na carteira | `Hommerson Agro` |
-| Datas | Parser civil + timezone de negócio | `hoje`, `10/09` |
+| Datas | Parser civil + timezone de negócio | `hoje`, `amanhã`, `segunda`, `10/09`; visita sem data → hoje em `America/Sao_Paulo` |
 
 O parser de valores aceita sufixos comuns (`mil`, `milhão`/`milhões`, `k`, `m`) e rejeita entradas ambíguas (`1,000` sem contexto de milhar versus decimal). Ambiguidade → `clarificationCode=AMBIGUOUS_AMOUNT`.
 
@@ -277,6 +286,25 @@ Preciso de uma análise de crédito para o cliente Hommerson Agro para ver se el
 8. Insights: `CREDIT_INSUFFICIENT` ou `CREDIT_SUFFICIENT_FOR_AMOUNT`, mais `OVERDUE_TITLES` / `CREDIT_NEAR_LIMIT` quando couber.
 9. Renderer determinístico, por exemplo: cliente autorizado, disponível, valor pedido, títulos vencidos autorizados, `asOf`. Sem frase do tipo “está aprovado”.
 
+## Exemplo: preparação de visita, Agro Tal, amanhã
+
+Utterance:
+
+```text
+Vou visitar o cliente Agro Tal amanhã
+```
+
+1. Sessão OIDC do RTV válida; ABAC de conversa permite atendimento.
+2. Parser civil marca `amanhã` → `2026-09-16` em `America/Sao_Paulo`.
+3. NLU devolve `visit_preparation`, menção `Agro Tal`, tópicos `last_visit`, `visit_notes`, `order_history`.
+4. Digibee resolve `Agro Tal` só na carteira do `rtvId` de servidor.
+5. Se o cliente não for do RTV: resposta genérica, evento de segurança, **nenhuma** consulta a visitas, pedidos ou Tarken.
+6. Se autorizado com AAL2: TOTVS (visitas, anotações, pedidos) em paralelo; Tarken só com AAL financeiro.
+7. Insights: `VISIT_GAP` somente se `diasDesdeUltimaVisita >= 45`; pauta só com códigos lastreados.
+8. Renderer determinístico envia o relatório em texto no WhatsApp (última visita, anotações, histórico de pedidos). Sem inventar data de visita quando o bloco TOTVS falhar.
+
+Fluxo completo e payload consolidado: [`preparacao-visita.md`](preparacao-visita.md) e [README](../README.md#fluxo-preparação-para-visita).
+
 ## Clarificação
 
 A conversa guarda um slot pendente versionado (`pendingClarification`), não um chat livre para a LLM.
@@ -285,6 +313,7 @@ A conversa guarda um slot pendente versionado (`pendingClarification`), não um 
 | --- | --- | --- |
 | `MISSING_CUSTOMER` | Qual cliente? | Nova menção → resolução |
 | `AMBIGUOUS_CUSTOMER` | Lista curta da carteira | `clarification_response` com índice ou nome |
+| `AMBIGUOUS_DATE` | Confirmar o dia da visita | Parser civil |
 | `MISSING_AMOUNT` | Qual valor do pedido a checar? | Parser + NLU |
 | `AMBIGUOUS_AMOUNT` | Confirmar o valor em reais | Parser |
 | `LOW_CONFIDENCE` | Reformular o pedido | Nova interpretação |
@@ -320,6 +349,11 @@ Logs de NLU guardam hash/token da utterance, intenção, flags e provedor. Não 
 10. Tarken `TIMEOUT` não gera `CREDIT_SUFFICIENT_FOR_AMOUNT`.
 11. Composição sem `sourceField` é rejeitada.
 12. Replay/canário: mesma utterance + mesmo catálogo → mesma intenção no schema, salvo clarificação explícita.
+13. Utterance `Vou visitar o cliente Agro Tal amanhã` na carteira produz `visit_preparation` e relatório WhatsApp com última visita, anotações e pedidos.
+14. A mesma utterance fora da carteira não consulta visitas/pedidos/Tarken e não revela existência.
+15. Visita há 29 dias não emite `VISIT_GAP`; há 45 dias ou mais emite.
+16. Visitas `TIMEOUT` com pedidos `SUCCESS` geram `PARTIAL_SUCCESS` sem data de visita inventada.
+17. Anotação com telefone/CPF é sanitizada antes do WhatsApp.
 
 ## Critérios para produção
 
@@ -327,6 +361,6 @@ Logs de NLU guardam hash/token da utterance, intenção, flags e provedor. Não 
 - Copilot Studio sem generative orchestration contra sistemas de origem.
 - Resolução de entidades somente na carteira, com testes de acesso cruzado.
 - Guardrails de injeção, ID inventado e step-up financeiro automatizados.
-- Renderer determinístico para `credit_analysis`.
+- Renderer determinístico para `credit_analysis` e `visit_preparation`.
 - Failover, timeout e recusa de NLU cobertos por evidência.
 - RIPD atualizado para o novo processamento de utterance em Copilot e OpenAI.

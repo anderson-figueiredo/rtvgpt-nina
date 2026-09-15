@@ -8,7 +8,8 @@ Documentos complementares:
 - [`docs/riscos-integracao.md`](docs/riscos-integracao.md): riscos, controles e critérios de produção;
 - [`docs/validacao-rtv-cpf.md`](docs/validacao-rtv-cpf.md): autenticação corporativa, vínculo do RTV e uso restrito do CPF;
 - [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md): especificação complementar de NLU, provedores e resolução na carteira;
-- [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta.
+- [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta;
+- [`docs/preparacao-visita.md`](docs/preparacao-visita.md): intenção `visit_preparation`, fan-out do briefing e relatório de visita no WhatsApp.
 
 ## Princípios obrigatórios
 
@@ -124,7 +125,7 @@ sequenceDiagram
     N->>D: Intenção + menções não confiáveis
 ```
 
-O `200` não declara conclusão do negócio. Payload inválido ou assinatura incorreta é rejeitado sem persistência; indisponibilidade da inbox não recebe ACK de sucesso. O exemplo ponta a ponta com cliente por nome, último pedido e ETA está em [Fluxo: estimativa de entrega do último pedido](#fluxo-estimativa-de-entrega-do-último-pedido).
+O `200` não declara conclusão do negócio. Payload inválido ou assinatura incorreta é rejeitado sem persistência; indisponibilidade da inbox não recebe ACK de sucesso. Exemplos ponta a ponta: [estimativa de entrega do último pedido](#fluxo-estimativa-de-entrega-do-último-pedido) e [preparação para visita](#fluxo-preparação-para-visita).
 
 ### Evento canônico do adapter para a Nina
 
@@ -310,7 +311,8 @@ Envelope interno, distinto do request nativo de Copilot ou OpenAI. Campos ausent
       }
     ],
     "orderNumbers": [],
-    "taxIds": []
+    "taxIds": [],
+    "dates": []
   },
   "pendingClarification": null
 }
@@ -360,7 +362,7 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | --- | --- | --- | --- | --- |
 | `credit_analysis` | Limite, score, “cabe um pedido de X” | `credit_limit`, `credit_available`, `credit_check_amount`, `overdue_titles` | Tarken + títulos TOTVS | Não |
 | `order_query` | Status, entrega, itens de um pedido | `delivery_eta`, `credit_limit`, `order_status` | TOTVS, LoogAI, crédito só se pedido | Sim, por tópico |
-| `visit_preparation` | Briefing de visita | visitas, pedidos, crédito, logística | Consolidado já especificado | Sim |
+| `visit_preparation` | Briefing de visita | `last_visit`, `visit_notes`, `order_history` (núcleo); `credit_limit`, `overdue_titles`, `delivery_eta` (opcional) | TOTVS visitas/anotações/pedidos; Tarken e LoogAI só se AAL e tópico | Sim |
 | `customer_lookup` | Cadastro básico autorizado | cadastro | Lecom/TOTVS cadastral | Sim |
 | `customer_update` | Alterar cadastro | campos declarados | Mutação com MFA | Não |
 | `order_create` | Criar pedido | rascunho | Outbox após confirmação | Não |
@@ -378,7 +380,7 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | Número de pedido | Regex de catálogo | `12345`, `pedido 12345` |
 | CNPJ/CPF | Detector; tokenização imediata | nunca enviado completo ao modelo nem ao WhatsApp |
 | Nome de cliente | LLM + busca na carteira | `Hommerson Agro` |
-| Datas | Parser civil + timezone de negócio | `hoje`, `10/09` |
+| Datas | Parser civil + timezone de negócio | `hoje`, `amanhã`, `segunda`, `10/09`; data de visita omitida → hoje em `America/Sao_Paulo` |
 
 ```mermaid
 flowchart LR
@@ -502,6 +504,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | `MISSING_CUSTOMER` | Qual cliente? | Nova menção → resolução |
 | `AMBIGUOUS_CUSTOMER` | Lista curta da carteira | `clarification_response` com índice ou nome |
+| `AMBIGUOUS_DATE` | Confirmar o dia da visita | Parser civil |
 | `MISSING_AMOUNT` | Qual valor do pedido a checar? | Parser + NLU |
 | `AMBIGUOUS_AMOUNT` | Confirmar o valor em reais | Parser |
 | `LOW_CONFIDENCE` | Reformular o pedido | Nova interpretação |
@@ -602,7 +605,7 @@ O envelope abaixo é o evento pós-validação enviado à orquestração, não a
 | --- | --- | --- | --- | --- | --- | --- |
 | `credit_analysis` | Cliente na carteira e AAL financeiro | Checagem de valor pedido | Crédito 5 min; títulos 5 min | Resposta genérica, sem revelar cliente fora da carteira | Não decidir capacidade; sinalizar limitação | Não permitido |
 | `order_query` | Pedido autorizado | ETA, crédito | Pedido 5 min; ETA 15 min; crédito 5 min | Informar ausência sem revelar cliente | Omitir tópico e sinalizar indisponibilidade | Responder apenas tópicos válidos |
-| `visit_preparation` | Cliente autorizado | Visitas, pedidos, crédito, logística | Cadastro 24 h; demais 15 min | Handoff se cliente não puder ser resolvido | Omitir bloco e indicar limitação | Briefing com blocos válidos |
+| `visit_preparation` | Cliente autorizado | `last_visit`, `visit_notes`, `order_history`; crédito e logística se AAL | Cadastro 24 h; visitas/pedidos/ETA 15 min; crédito 5 min | Fora da carteira: genérico; irresolúvel após clarificação: handoff | Omitir bloco e indicar limitação | Relatório WhatsApp com blocos válidos |
 | `customer_lookup` | Cliente autorizado | Cadastro | Cadastro 24 h | Resposta genérica | Omitir bloco | Responder campos válidos |
 | `customer_update` | Cliente, campos e MFA | — | Autorização em tempo real | Não executar | Não repetir sem reconciliação | Não permitido |
 | `order_create` | Rascunho confirmado, MFA e versão | — | Autorização em tempo real | Não executar | Consultar por `operationId` | Não permitido |
@@ -761,6 +764,374 @@ Fatos preferem template determinístico. Se houver LLM, cada segmento exige `sou
 
 ITSM e WhatsApp são efeitos independentes da outbox (`ticket-comment:{eventId}` e `whatsapp-send:{outboundCommandId}`). Falha de ITSM não bloqueia o envio. O ticket só entra em `WAITING_USER` no marco `DELIVERED`. Resposta cuja `conversationVersion` já foi superada recebe `STALE` e não é enviada.
 
+## Fluxo: preparação para visita
+
+Pedido típico no WhatsApp:
+
+> Vou visitar o cliente Agro Tal amanhã
+
+A Nina classifica `visit_preparation` e extrai menções não confiáveis (nome e data). O Digibee resolve o cliente na carteira, consolida última visita, anotações/registros e histórico de pedidos, e a outbox envia um **relatório em texto** no mesmo chat. Especificação complementar: [`docs/preparacao-visita.md`](docs/preparacao-visita.md).
+
+O `200` do webhook só confirma persistência na inbox. Crédito e logística são enriquecimento: timeout ou AAL insuficiente **não** bloqueiam o núcleo do briefing.
+
+```mermaid
+sequenceDiagram
+    participant U as RTV no WhatsApp
+    participant A as Adapter Digibee
+    participant I as Inbox durável
+    participant Q as Consumidor serial
+    participant N as Nina
+    participant D as Digibee
+    participant L as Lecom
+    participant T as TOTVS Datasul
+    participant P as Portal de Pedidos
+    participant K as Tarken
+    participant G as LoogAI
+    participant R as Renderer validador
+    participant O as Outbox
+    participant W as WhatsApp
+    participant S as ITSM
+
+    U->>A: POST webhook (envelope nativo)
+    A->>A: Limite + assinatura nos bytes originais
+    A->>I: INSERT UNIQUE provider,messageId
+    A-->>U: 200 OK
+    I->>Q: Evento canônico por conversationId
+    Q->>Q: OIDC/MFA, vínculo telefone-RTV e ABAC
+    Q->>O: ticket-create:{eventId}
+    Q->>N: Evento canônico
+    N->>N: Parser de data + NLU visit_preparation
+    N->>D: Resolver Agro Tal na carteira
+    alt Fora da carteira
+        D-->>N: 0 candidatos
+        N->>O: Resposta FORBIDDEN genérica
+    else Ambíguo
+        D-->>N: N candidatos
+        N->>O: Clarificação nome + cidade
+    else Autorizado
+        D->>L: Cadastro filtrado pelo rtvId de servidor
+        D->>T: Visitas, anotações e pedidos autorizados
+        D->>P: Pedidos em captura
+        opt AAL financeiro suficiente
+            D->>K: Snapshot de crédito
+            D->>T: Títulos
+        end
+        D->>G: Pedidos em aberto / ETA
+        D->>D: Insights determinísticos
+        D->>R: Consolidado versionado com proveniência
+        R->>O: OUTBOUND_ACCEPTED
+    end
+    par Efeitos independentes
+        O->>W: whatsapp-send:{outboundCommandId}
+        O->>S: ticket-comment:{eventId}
+    end
+    W-->>O: ACCEPTED / DELIVERED / READ / FAILED
+```
+
+### 1. Entrada e evento canônico
+
+O adapter valida o envelope nativo, persiste o evento e devolve `200`. O telefone permanece no cofre de identidade.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "eventId": "evt_01J...",
+  "traceId": "trc_01J...",
+  "conversationId": "cnv_01J...",
+  "conversationSequence": 21,
+  "conversationVersion": 12,
+  "causationId": "evt_01J_previous",
+  "messageId": "wamid.HBgL...",
+  "occurredAt": "2026-09-15T22:12:00Z",
+  "channel": "whatsapp",
+  "input": {
+    "type": "text",
+    "text": "Vou visitar o cliente Agro Tal amanhã"
+  },
+  "ticket": {
+    "ticketId": null,
+    "ticketLinkStatus": "PENDING"
+  }
+}
+```
+
+Sem sessão OIDC válida, o WhatsApp recebe apenas o link de autenticação. A conversa não espera o ITSM.
+
+### 2. Intenção extraída pela Nina
+
+O parser civil resolve `amanhã` em `America/Sao_Paulo` (neste exemplo, `2026-09-16`). A NLU devolve menções, não identidade. Data omitida pelo RTV vira a data civil de hoje no servidor.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "catalogVersion": "intents-v1",
+  "intent": "visit_preparation",
+  "requestedTopics": ["last_visit", "visit_notes", "order_history"],
+  "mentions": {
+    "customer": {
+      "raw": "Agro Tal",
+      "type": "CUSTOMER_NAME"
+    },
+    "plannedVisitDate": {
+      "raw": "amanhã",
+      "civilDate": "2026-09-16",
+      "timeZone": "America/Sao_Paulo"
+    }
+  }
+}
+```
+
+`mentions.customer.raw` e `plannedVisitDate` não autorizam nada. `civilDate` da LLM só vale se coincidir com o parser. O gateway resolve o cliente na carteira e acrescenta o contexto interno das claims (`subjectId`, `rtvId`, tenant, AAL, finalidade `RTV_CUSTOMER_SERVICE`). Esse bloco não volta para o modelo.
+
+O núcleo do briefing exige AAL2 e a regra ABAC **antes** do fan-out:
+
+```text
+subject autenticado
+AND ação visit_preparation permitida
+AND cliente pertence à carteira vigente
+AND finalidade autorizada
+AND nível de autenticação suficiente para o tópico
+```
+
+Crédito, score e títulos só entram com AAL financeiro. AAL insuficiente omite o bloco; não chama Tarken e não interrompe visitas nem pedidos.
+
+### 3. Resolução no Digibee
+
+| Passo | Fonte | Responsabilidade |
+| --- | --- | --- |
+| Resolver o cliente pelo nome | Lecom | Cadastro fiscal; nome ambíguo não gera match inventado |
+| Autorizar a carteira | TOTVS/Datasul | Cliente na carteira vigente do RTV; Lecom não amplia autorização |
+| Última visita e anotações | TOTVS (módulo comercial / SFA) | Data, objetivo, resultado e até 5 registros sanitizados |
+| Histórico de pedidos | TOTVS | Pedidos integrados da janela de 180 dias, até 8 itens; Portal só durante captura |
+| Snapshot de crédito (opcional) | Tarken + títulos TOTVS | Sem análise nova e sem frase de aprovação |
+| Entregas em aberto (opcional) | LoogAI | ETA/ocorrência de pedidos autorizados do cliente |
+
+Freshness: cadastro 24 h; visitas, anotações, pedidos e ETA 15 min; crédito 5 min. Cada bloco inclui `source`, `sourceUpdatedAt`, `observedAt`, `version` e `staleness`.
+
+| Resultado | Tratamento no WhatsApp |
+| --- | --- |
+| Cliente autorizado e ao menos um bloco nuclear fresco | Relatório textual com fatos lastreados |
+| Nome ausente | `MISSING_CUSTOMER` |
+| Homônimos na carteira | `AMBIGUOUS_CUSTOMER` com nome fantasia e cidade |
+| 0 na carteira | `FORBIDDEN` genérico; sem visitas, pedidos ou Tarken |
+| Visitas `TIMEOUT` / `NOT_FOUND` e pedidos ok | `PARTIAL_SUCCESS`: omitir última visita; não inventar data |
+| Pedidos indisponíveis e visitas ok | `PARTIAL_SUCCESS`: omitir histórico |
+| Tarken/LoogAI indisponível | Omitir enriquecimento; núcleo segue |
+| Irresolúvel após TTL da clarificação | Handoff Teams e limitação genérica |
+
+### 4. Consolidado de referência
+
+Dinheiro em minor units. Anotações já passaram por DLP. CNPJ não aparece no relatório.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "intent": "visit_preparation",
+  "asOf": "2026-09-15T22:12:00Z",
+  "timeZone": "America/Sao_Paulo",
+  "cliente": {
+    "data": {
+      "nomeFantasia": "Agro Tal Ltda",
+      "cidade": "Ribeirão Preto",
+      "statusCadastro": "ATIVO"
+    },
+    "provenance": {
+      "source": "totvs_datasul",
+      "sourceUpdatedAt": "2026-09-15T12:00:00Z",
+      "observedAt": "2026-09-15T22:12:04Z",
+      "version": "customer-cli-token-v7",
+      "staleness": "PT10H12M"
+    }
+  },
+  "visitaPlanejada": {
+    "data": {
+      "civilDate": "2026-09-16",
+      "raw": "amanhã",
+      "timeZone": "America/Sao_Paulo"
+    }
+  },
+  "visita": {
+    "data": {
+      "ultimaVisita": {
+        "civilDate": "2026-07-28",
+        "diasDesdeUltimaVisita": 50,
+        "objetivo": "Reposição da linha de defensivos",
+        "resultado": "Combinado retorno com nova tabela"
+      },
+      "registrosAnteriores": [
+        {
+          "civilDate": "2026-07-28",
+          "tipo": "VISITA",
+          "anotacao": "Cliente reclamou atraso da NF. Combinado retorno em 30 dias."
+        },
+        {
+          "civilDate": "2026-06-03",
+          "tipo": "VISITA",
+          "anotacao": "Interesse em aumentar volume da linha foliar se prazo for 28 dias."
+        },
+        {
+          "civilDate": "2026-05-20",
+          "tipo": "OBSERVACAO_CADASTRO",
+          "anotacao": "Comprador no período da manhã."
+        }
+      ]
+    },
+    "provenance": {
+      "source": "totvs_datasul",
+      "sourceUpdatedAt": "2026-07-28T18:10:00Z",
+      "observedAt": "2026-09-15T22:12:05Z",
+      "version": "visit-cli-token-v4",
+      "staleness": "PT4M"
+    }
+  },
+  "historicoPedidos": {
+    "data": {
+      "janelaDias": 180,
+      "quantidade": 4,
+      "valorTotalJanela": {
+        "amountMinor": 8642010,
+        "currency": "BRL"
+      },
+      "itens": [
+        {
+          "numero": "12345",
+          "civilDate": "2026-09-01",
+          "valorTotal": {
+            "amountMinor": 1523055,
+            "currency": "BRL"
+          },
+          "statusErp": "LIBERADO",
+          "principaisItens": ["Defensivo A"]
+        },
+        {
+          "numero": "11890",
+          "civilDate": "2026-08-12",
+          "valorTotal": {
+            "amountMinor": 2210000,
+            "currency": "BRL"
+          },
+          "statusErp": "FATURADO",
+          "principaisItens": ["Defensivo A"]
+        },
+        {
+          "numero": "11002",
+          "civilDate": "2026-07-02",
+          "valorTotal": {
+            "amountMinor": 1980000,
+            "currency": "BRL"
+          },
+          "statusErp": "FATURADO",
+          "principaisItens": ["Semente C"]
+        },
+        {
+          "numero": "10211",
+          "civilDate": "2026-05-18",
+          "valorTotal": {
+            "amountMinor": 2928955,
+            "currency": "BRL"
+          },
+          "statusErp": "FATURADO",
+          "principaisItens": ["Defensivo A", "Foliar B"]
+        }
+      ]
+    },
+    "provenance": {
+      "source": "totvs_datasul",
+      "sourceUpdatedAt": "2026-09-01T16:40:00Z",
+      "observedAt": "2026-09-15T22:12:05Z",
+      "version": "orders-cli-token-180d-v11",
+      "staleness": "PT3M"
+    }
+  },
+  "insights": [
+    {
+      "code": "VISIT_GAP",
+      "sourceField": "$.visita.data.ultimaVisita.diasDesdeUltimaVisita"
+    },
+    {
+      "code": "OPEN_ORDERS",
+      "sourceField": "$.historicoPedidos.data.itens[0].statusErp"
+    },
+    {
+      "code": "MISSING_RECURRING_SKU",
+      "sourceField": "$.historicoPedidos.data.itens"
+    },
+    {
+      "code": "TALKING_POINT",
+      "sourceField": "$.visita.data.registrosAnteriores"
+    }
+  ]
+}
+```
+
+`VISIT_GAP` exige 45 dias ou mais. Foliar B está no pedido de maio e **não** no último (`12345`), o que lastreia `MISSING_RECURRING_SKU`.
+
+### 5. Relatório no WhatsApp
+
+Fatos preferem template determinístico (teto de 2000 caracteres). Se houver LLM, cada segmento exige `sourceField`. DLP classifica o payload como `COMMERCIAL_CONFIDENTIAL` antes de WhatsApp, ITSM e OpenAI.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "message": {
+    "segments": [
+      {
+        "text": "Preparação de visita — Agro Tal Ltda\nRibeirão Preto · visita em 16/09/2026",
+        "sourceField": "$.cliente.data.nomeFantasia"
+      },
+      {
+        "text": "Última visita: 28/07/2026 (há 50 dias).",
+        "sourceField": "$.visita.data.ultimaVisita.civilDate"
+      },
+      {
+        "text": "• 28/07/2026 — Cliente reclamou atraso da NF. Combinado retorno em 30 dias.",
+        "sourceField": "$.visita.data.registrosAnteriores[0].anotacao"
+      },
+      {
+        "text": "• 12345 · 01/09 · R$ 15.230,55 · LIBERADO — Defensivo A",
+        "sourceField": "$.historicoPedidos.data.itens[0]"
+      },
+      {
+        "text": "Há 50 dias sem visita registrada.",
+        "sourceField": "$.insights[0].code"
+      }
+    ]
+  },
+  "dataClasses": ["COMMERCIAL_CONFIDENTIAL"]
+}
+```
+
+Texto completo esperado no canal (renderer):
+
+```text
+Preparação de visita — Agro Tal Ltda
+Ribeirão Preto · visita em 16/09/2026
+
+Última visita: 28/07/2026 (há 50 dias).
+Objetivo: reposição da linha de defensivos.
+Resultado: combinado retorno com nova tabela.
+
+Anotações e registros:
+• 28/07/2026 — Cliente reclamou atraso da NF. Combinado retorno em 30 dias.
+• 03/06/2026 — Interesse em aumentar foliar se prazo for 28 dias.
+• 20/05/2026 — Comprador no período da manhã.
+
+Pedidos recentes (180 dias):
+• 12345 · 01/09 · R$ 15.230,55 · LIBERADO — Defensivo A
+• 11890 · 12/08 · R$ 22.100,00 · FATURADO — Defensivo A
+• 11002 · 02/07 · R$ 19.800,00 · FATURADO — Semente C
+• 10211 · 18/05 · R$ 29.289,55 · FATURADO — Defensivo A, Foliar B
+
+Pauta:
+• Há 50 dias sem visita registrada.
+• Pedido 12345 em aberto; confirmar status na visita.
+• Foliar B não veio no último pedido; retomar prazo de 28 dias.
+
+Atualizado em 15/09/2026 22:12 (America/Sao_Paulo).
+```
+
+ITSM e WhatsApp permanecem efeitos independentes da outbox. Falha de ITSM não bloqueia o envio. Resposta `STALE` não é enviada.
+
 ## Fonte de verdade e consistência temporal
 
 | Entidade/campo | Fonte de verdade | Fontes auxiliares | Regra de conflito |
@@ -771,6 +1142,7 @@ ITSM e WhatsApp são efeitos independentes da outbox (`ticket-comment:{eventId}`
 | Estado financeiro/crédito | Tarken | TOTVS | Tarken para decisão; TOTVS para títulos |
 | Pedido | TOTVS | Portal | TOTVS após integração; Portal durante captura |
 | Entrega/ETA | LoogAI | TOTVS | LoogAI para tracking; TOTVS para faturamento |
+| Visita comercial e anotações | TOTVS/Datasul (SFA) | cadastro Lecom | TOTVS para histórico de visita; Lecom não inventa visita |
 | Conversa/eventos | Event store | ITSM | event store prevalece |
 
 Todo bloco consolidado inclui `source`, `sourceUpdatedAt`, `observedAt`, `version` e `staleness`. A resposta possui `asOf`; dados fora da janela são omitidos ou marcados `STALE`, nunca combinados silenciosamente.
@@ -789,12 +1161,12 @@ Insights são determinísticos, versionados e testados:
 | `OVERDUE_TITLES` | há título vencido autorizado |
 | `DELIVERY_EXCEPTION` | entrega possui ocorrência |
 | `OPEN_ORDERS` | há pedidos ainda abertos |
-| `VISIT_GAP` | 45 dias ou mais desde a última visita |
+| `VISIT_GAP` | 45 dias ou mais desde a última visita, em relação à data planejada (`plannedVisitDate`) |
 | `VOLUME_DROP` | volume da janela inferior ao período comparável |
 | `MISSING_RECURRING_SKU` | item recorrente ausente na janela atual |
 | `TALKING_POINT` | pauta derivada de um ou mais códigos anteriores |
 
-Fatos devem ser renderizados por template sempre que possível. Se uma LLM for usada, cada afirmação factual referencia `sourceField`; schema estrito e validador rejeitam nomes, números, datas ou valores ausentes. Em falha ou recusa, usa-se renderer determinístico. Histórico conversacional livre não é enviado à etapa de composição.
+Fatos devem ser renderizados por template sempre que possível. Se uma LLM for usada, cada afirmação factual referencia `sourceField`; schema estrito e validador rejeitam nomes, números, datas ou valores ausentes. Em falha ou recusa, usa-se renderer determinístico. Histórico conversacional livre não é enviado à etapa de composição. No briefing de visita, a pauta só pode repetir códigos `insights` lastreados.
 
 “Nina → adapter LLM” é um contrato interno, usado na NLU e, se necessário, na composição. O adapter mapeia para o provedor `microsoft_copilot` (Azure OpenAI / Microsoft Foundry) ou `openai`, com modelo em allowlist, structured output, timeout, recusa e resposta incompleta. Esse envelope não é o request nativo da Responses API nem o JSON auto-detectado do Copilot Studio. O bot Copilot no Teams permanece canal e handoff; não orquestra sistemas de origem.
 

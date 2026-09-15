@@ -1,6 +1,6 @@
 # Riscos das integrações
 
-Este documento registra riscos, controles e evidências mínimas para a arquitetura Digibee + Nina. O [`README.md`](../README.md) é a referência arquitetural, [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md) define os mecanismos e [`interpretacao-nina.md`](interpretacao-nina.md) cobre o runtime de NLU.
+Este documento registra riscos, controles e evidências mínimas para a arquitetura Digibee + Nina. O [`README.md`](../README.md) é a referência arquitetural, [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md) define os mecanismos, [`interpretacao-nina.md`](interpretacao-nina.md) cobre o runtime de NLU e [`preparacao-visita.md`](preparacao-visita.md) cobre o briefing de visita.
 
 ## Escala
 
@@ -43,6 +43,7 @@ Este documento registra riscos, controles e evidências mínimas para a arquitet
 | R29 | P1 | Failover escolhe intenção mais frouxa | Copilot e OpenAI divergem | failover só em erro de plataforma; canário alerta | divergência não autoriza fan-out extra |
 | R30 | P1 | Parser monetário interpreta `1milhão`/`1,000` errado | valor pedido incorreto | parser `pt-BR` versionado; conflito → clarificação | crédito sem valor unívoco não decide |
 | R31 | P1 | Modelo afirma aprovação de crédito | “pode fazer o pedido” sem lastro | insight determinístico; renderer; `sourceField` | timeout Tarken não gera `CREDIT_SUFFICIENT_FOR_AMOUNT` |
+| R32 | P1 | Anotações de visita vazam PII no WhatsApp | telefone, CPF ou CNPJ no dossiê | DLP nas notas antes do consolidado e do renderer; teto de 280 caracteres por registro | fixture com telefone na anotação não aparece no texto enviado |
 
 ## Controles de segurança
 
@@ -151,6 +152,9 @@ Cada alerta precisa de owner, runbook, limiar, janela e política de escalonamen
 14. Compatibilidade entre versões de produtor e consumidor.
 15. Cliente fora da carteira, homônimo e injeção de prompt.
 16. Timeout Tarken não afirma capacidade de pedido.
+17. Briefing de visita com cliente fora da carteira não consulta TOTVS de visitas/pedidos.
+18. Anotação com telefone/CPF não aparece no WhatsApp (R32).
+19. `VISIT_GAP` ausente com 29 dias e presente com 45.
 
 ## Critério de liberação
 

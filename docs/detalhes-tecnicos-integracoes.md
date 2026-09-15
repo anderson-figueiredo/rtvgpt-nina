@@ -1,6 +1,6 @@
 # Detalhes técnicos das integrações
 
-Este documento detalha a implementação da arquitetura descrita no [`README.md`](../README.md). A interpretação de linguagem natural está em [`interpretacao-nina.md`](interpretacao-nina.md). Exemplos são referenciais e devem ser validados pelos schemas publicados.
+Este documento detalha a implementação da arquitetura descrita no [`README.md`](../README.md). A interpretação de linguagem natural está em [`interpretacao-nina.md`](interpretacao-nina.md). O briefing de visita está em [`preparacao-visita.md`](preparacao-visita.md). Exemplos são referenciais e devem ser validados pelos schemas publicados.
 
 ## 1. Pipelines e componentes
 
@@ -148,6 +148,34 @@ Metadados ficam no envelope; a intenção é única e os tópicos são uma lista
 }
 ```
 
+Exemplo pós-validação da intenção `visit_preparation` (menções ainda não confiáveis):
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "eventId": "evt_01J...",
+  "traceId": "trc_01J...",
+  "conversationId": "cnv_01J...",
+  "conversationSequence": 21,
+  "conversationVersion": 12,
+  "causationId": "evt_01J_inbound",
+  "ticketId": null,
+  "intent": "visit_preparation",
+  "requestedTopics": ["last_visit", "visit_notes", "order_history"],
+  "mentions": {
+    "customer": {
+      "raw": "Agro Tal",
+      "type": "CUSTOMER_NAME"
+    },
+    "plannedVisitDate": {
+      "raw": "amanhã",
+      "civilDate": "2026-09-16",
+      "timeZone": "America/Sao_Paulo"
+    }
+  }
+}
+```
+
 Não há `rtvId`, tenant, telefone ou destinatário fornecido pela LLM. O gateway valida o token e acrescenta contexto interno:
 
 ```json
@@ -196,6 +224,7 @@ O consolidado inclui `asOf` e não mistura silenciosamente snapshots fora da jan
 | Cadastro fiscal | Lecom, por campo | conflitos são sinalizados |
 | Pedido integrado | TOTVS | Portal é principal durante captura |
 | Crédito | Tarken | títulos permanecem no TOTVS |
+| Visita comercial e anotações | TOTVS/Datasul (SFA) | Lecom não inventa visita; texto passa por DLP |
 | ETA/tracking | LoogAI | faturamento permanece no TOTVS |
 | Eventos da conversa | Event store | ITSM é projeção |
 
@@ -212,7 +241,7 @@ Cada intenção possui schema próprio de requisitos. Resultado global não subs
 | `STALE` | Omitir ou rotular conforme matriz da intenção |
 | `PARTIAL_SUCCESS` | Responder apenas com fatos válidos e avisar limitação |
 
-Mutações, crédito decisório e criação de pedido não admitem sucesso parcial. Uma consulta de preparação de visita pode omitir visitas se cadastro autorizado e outros blocos válidos existirem.
+Mutações, crédito decisório e criação de pedido não admitem sucesso parcial. Uma consulta de preparação de visita pode omitir visitas ou pedidos se o cadastro autorizado e ao menos um bloco nuclear válido existir. Crédito e logística omitidos não impedem o relatório. Especificação: [`preparacao-visita.md`](preparacao-visita.md).
 
 ## 8. LLM e validação factual
 
@@ -252,7 +281,7 @@ O renderer determinístico é preferencial para fatos. Se houver LLM na composi�
 }
 ```
 
-O catálogo `insights-v1` usa enums únicos. `VISIT_GAP` requer no mínimo 45 dias; uma visita há 29 dias não gera esse código. Entrega em aberto usa `OPEN_ORDERS`; ocorrência usa `DELIVERY_EXCEPTION`. `CREDIT_INSUFFICIENT` e `CREDIT_SUFFICIENT_FOR_AMOUNT` só nascem de Tarken `SUCCESS` mais o valor pedido já parseado; timeout não afirma capacidade.
+O catálogo `insights-v1` usa enums únicos. `VISIT_GAP` requer no mínimo 45 dias em relação à data planejada da visita; uma visita há 29 dias não gera esse código. Entrega em aberto usa `OPEN_ORDERS`; ocorrência usa `DELIVERY_EXCEPTION`. `CREDIT_INSUFFICIENT` e `CREDIT_SUFFICIENT_FOR_AMOUNT` só nascem de Tarken `SUCCESS` mais o valor pedido já parseado; timeout não afirma capacidade. No briefing de visita, a composição só verbaliza insights presentes no consolidado.
 
 ## 9. Outbound e marcos de entrega
 

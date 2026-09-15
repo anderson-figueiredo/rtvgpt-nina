@@ -67,7 +67,7 @@ sequenceDiagram
 - Adaptive Card;
 - payload público do orquestrador.
 
-A interpretação da Nina resolve o cliente pela carteira vigente, nunca pela identidade que o modelo sugerir. Consulte [`interpretacao-nina.md`](interpretacao-nina.md).
+A interpretação da Nina resolve o cliente pela carteira vigente, nunca pela identidade que o modelo sugerir. Consulte [`interpretacao-nina.md`](interpretacao-nina.md) e [`preparacao-visita.md`](preparacao-visita.md).
 
 O gateway constrói um contexto interno após validar as claims:
 
@@ -102,6 +102,7 @@ AND versão de permissão ainda válida
 | Operação | AAL mínimo | Regras adicionais |
 | --- | --- | --- |
 | Consulta cadastral básica | AAL2 | cliente na carteira; finalidade de atendimento |
+| Briefing de visita (última visita, anotações, pedidos) | AAL2 | cliente na carteira; crédito omitido se AAL financeiro insuficiente |
 | Pedido e entrega | AAL2 | pedido pertence a cliente autorizado |
 | Limite, score e títulos | AAL2 recente ou AAL3 conforme política | step-up quando sessão exceder janela |
 | Alteração cadastral | AAL3 | confirmação explícita e versão do recurso |
@@ -210,6 +211,7 @@ Devem ser definidos base legal, finalidade, retenção, descarte, acesso, operad
 9. Troca de número revoga sessões antigas.
 10. HMAC usa chave KMS/HSM versionada; hash simples não aparece.
 11. Logs, ITSM, Teams e LLM não contêm CPF ou contexto de autorização indevido.
+12. Briefing de visita com AAL2 e sem AAL financeiro consulta visitas/pedidos e não chama Tarken.
 
 ## Critérios para produção
 
