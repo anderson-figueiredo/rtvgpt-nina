@@ -144,6 +144,7 @@ Saída: ponta a ponta WhatsApp → NLU → Digibee → resposta factual.
 Objetivo: a mesma NLU alimentar `order_query` e `visit_preparation` sem novo cérebro.
 
 - [ ] Mapear tópicos extraídos para a matriz de resultado mínimo já publicada.
+- [ ] `visit_preparation`: briefing com `last_visit_date`, `visit_notes` e `order_history` (Lecom + TOTVS), conforme o fluxo do README.
 - [ ] Resolução de pedido na carteira, análoga à de cliente.
 - [ ] `clarification_response` retoma a intenção pendente por `conversationVersion`.
 - [ ] `human_handoff_request` reusa o fallback Teams existente.
