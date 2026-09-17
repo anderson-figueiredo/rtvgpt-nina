@@ -149,7 +149,7 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | --- | --- | --- | --- | --- |
 | `credit_analysis` | Limite, score, “cabe um pedido de X”, análise de crédito | `credit_limit`, `credit_available`, `credit_check_amount`, `overdue_titles` | Tarken + títulos TOTVS | Não |
 | `order_query` | Status, entrega, itens de um pedido | `delivery_eta`, `credit_limit`, `order_status` | TOTVS, LoogAI, crédito só se pedido | Sim, por tópico |
-| `visit_preparation` | Briefing de visita | visitas, pedidos, crédito, logística | Consolidado já especificado | Sim |
+| `visit_preparation` | Briefing de visita | `last_visit_date`, `visit_notes`, `order_history`; crédito/logística só se o RTV pedir | Lecom (visitas/anotações) + TOTVS (pedidos) | Sim |
 | `customer_lookup` | Cadastro básico autorizado | cadastro | Lecom/TOTVS cadastral | Sim |
 | `customer_update` | Alterar cadastro | campos declarados | Mutação com MFA | Não |
 | `order_create` | Criar pedido | rascunho | Outbox após confirmação | Não |
@@ -158,6 +158,16 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | `out_of_scope` | Fora do atendimento RTV | — | Sem fan-out | — |
 
 `credit_analysis` não cria pedido. “Consegue fazer um pedido de 1 milhão” é checagem de valor contra fatos financeiros, com insight determinístico.
+
+`visit_preparation` não cria registro de visita. “Amanhã vou visitar a fazenda Boa Vista, preciso de um briefing” resolve o cliente na carteira e consolida última visita, anotações e histórico de pedidos; o detalhe ponta a ponta está no [`README.md`](../README.md#fluxo-briefing-de-visita).
+
+### Matriz mínima de `visit_preparation`
+
+| Resultado | Obrigatório | Freshness | `NOT_FOUND` | `TIMEOUT` / `STALE` | `FORBIDDEN` |
+| --- | --- | --- | --- | --- | --- |
+| Briefing | Cliente na carteira | Visitas/anotações 24 h; pedidos 15 min | Omitir o bloco (sem visita, sem anotação ou sem pedido na janela) e seguir com os válidos | Omitir o bloco e sinalizar limitação; sem `VISIT_GAP` inventado | Resposta genérica, sem Lecom de visitas nem TOTVS de pedidos |
+
+Tópicos padrão: `last_visit_date`, `visit_notes`, `order_history`. Crédito e ETA só entram se o RTV os pedir; crédito continua exigindo AAL financeiro. Histórico conversacional livre do WhatsApp não preenche `visit_notes`.
 
 ### Matriz mínima de `credit_analysis`
 
@@ -184,7 +194,7 @@ Esses códigos não são aprovação de crédito.
 | Número de pedido | Regex de catálogo | `12345`, `pedido 12345` |
 | CNPJ/CPF | Detector; tokenização imediata | nunca enviado completo ao modelo nem ao WhatsApp |
 | Nome de cliente | LLM + busca na carteira | `Hommerson Agro` |
-| Datas | Parser civil + timezone de negócio | `hoje`, `10/09` |
+| Datas | Parser civil + timezone de negócio | `hoje`, `amanhã`, `10/09` |
 
 O parser de valores aceita sufixos comuns (`mil`, `milhão`/`milhões`, `k`, `m`) e rejeita entradas ambíguas (`1,000` sem contexto de milhar versus decimal). Ambiguidade → `clarificationCode=AMBIGUOUS_AMOUNT`.
 
@@ -277,6 +287,25 @@ Preciso de uma análise de crédito para o cliente Hommerson Agro para ver se el
 8. Insights: `CREDIT_INSUFFICIENT` ou `CREDIT_SUFFICIENT_FOR_AMOUNT`, mais `OVERDUE_TITLES` / `CREDIT_NEAR_LIMIT` quando couber.
 9. Renderer determinístico, por exemplo: cliente autorizado, disponível, valor pedido, títulos vencidos autorizados, `asOf`. Sem frase do tipo “está aprovado”.
 
+## Exemplo: Fazenda Boa Vista, briefing de visita
+
+Utterance:
+
+```text
+amanhã vou visitar a fazenda Boa Vista, preciso de um briefing
+```
+
+1. Sessão OIDC do RTV válida; ABAC de conversa permite atendimento.
+2. Parser marca `amanhã` → data civil no timezone de negócio.
+3. NLU devolve `visit_preparation`, menção `fazenda Boa Vista`, tópicos `last_visit_date`, `visit_notes` e `order_history`.
+4. Digibee resolve `fazenda Boa Vista` só na carteira do `rtvId` de servidor.
+5. Se o cliente não for do RTV: resposta genérica, evento de segurança, **nenhuma** consulta a visitas ou pedidos.
+6. Se autorizado: Lecom (última visita e anotações) e TOTVS (histórico de pedidos) em paralelo, com deadlines e freshness.
+7. Insights: `VISIT_GAP` só com última visita `SUCCESS` e ≥ 45 dias; `OPEN_ORDERS` / `TALKING_POINT` quando couber.
+8. Renderer determinístico com `asOf`. Sem inventar pauta e sem gravar a visita planejada.
+
+O fluxo completo está no [`README.md`](../README.md#fluxo-briefing-de-visita).
+
 ## Clarificação
 
 A conversa guarda um slot pendente versionado (`pendingClarification`), não um chat livre para a LLM.
@@ -302,7 +331,8 @@ Além dos sinais já exigidos:
 - resoluções 0/1/N na carteira;
 - tentativas `UNGROUNDED_ID` e `PROMPT_INJECTION`;
 - divergência de canário entre Copilot e OpenAI;
-- decisões `CREDIT_*` sempre acompanhadas de `source` e `asOf`.
+- decisões `CREDIT_*` sempre acompanhadas de `source` e `asOf`;
+- decisões `VISIT_GAP` sempre acompanhadas de `lastVisitDate`, `asOf`/`plannedVisitDate` e `source`.
 
 Logs de NLU guardam hash/token da utterance, intenção, flags e provedor. Não guardam texto completo com PII, prompt de sistema nem payload financeiro.
 
@@ -320,6 +350,9 @@ Logs de NLU guardam hash/token da utterance, intenção, flags e provedor. Não 
 10. Tarken `TIMEOUT` não gera `CREDIT_SUFFICIENT_FOR_AMOUNT`.
 11. Composição sem `sourceField` é rejeitada.
 12. Replay/canário: mesma utterance + mesmo catálogo → mesma intenção no schema, salvo clarificação explícita.
+13. Utterance da Fazenda Boa Vista com cliente na carteira e fora da carteira.
+14. Timeout de Lecom não gera `VISIT_GAP` nem preenche anotações com histórico do WhatsApp.
+15. Briefing parcial: visita ausente ainda devolve pedidos autorizados.
 
 ## Critérios para produção
 
