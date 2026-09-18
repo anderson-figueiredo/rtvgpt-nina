@@ -511,7 +511,7 @@ Erros HTTP seguem RFC 9457. O WhatsApp não recebe motivo de segurança, existê
 
 A trilha imutável registra sujeito tokenizado e tenant; `conversationId`, ação e recurso tokenizado; finalidade; nível e instante da autenticação; versão da política/permissões; decisão `ALLOW`, `DENY` ou `STEP_UP`; motivos codificados, sem dado bruto; timestamp RFC 3339 UTC e resultado.
 
-Não registrar CPF, token OIDC, authorization code, verifier PKCE, nonce, telefone completo ou payload financeiro. Logs de segurança são segregados do ITSM e Teams.
+Não registrar CPF, token OIDC, authorization code, verifier PKCE, nonce, telefone completo ou payload financeiro. Logs de segurança são segregados do ITSM e Teams. Devem ser definidos base legal, finalidade, retenção, descarte, acesso, operadores, eventual transferência internacional e processo de direitos do titular. Dados derivados devem acompanhar exclusão e retenção da origem.
 
 ---
 
@@ -1599,7 +1599,7 @@ Antes de OpenAI, Teams, ITSM e WhatsApp, a política DLP calcula classes; não c
 
 O ITSM recebe resumo mínimo, IDs tokenizados e `visibility=restricted`, com ACL por fila e finalidade. A primeira mensagem fica apenas na descrição mínima do ticket; eventos posteriores viram comentários, sem duplicação.
 
-A trilha imutável registra ator autenticado, decisão de autorização, ação, recurso, finalidade, instante e resultado. Uso de provedor LLM exige dados minimizados/tokenizados, treinamento desabilitado e retenção/região contratualmente aprovadas.
+A trilha imutável registra ator autenticado, decisão de autorização, ação, recurso, finalidade, instante e resultado. Antes da produção, as fontes de arquitetura e riscos exigem inventário de tratamento, RIPD, base legal/finalidade, papéis de controlador e operador, análise de transferência internacional, processo de direitos do titular, retenção por categoria, exclusão propagada e revisão humana de decisões automatizadas relevantes. Exclusões são propagadas. Uso de provedor LLM exige dados minimizados/tokenizados, treinamento desabilitado e retenção/região contratualmente aprovadas.
 
 ### Padrões de contrato
 
@@ -1656,7 +1656,7 @@ A escala:
 | R11 | P1 | Envelope nativo misturado ao canônico | assinatura/schema inválidos | adapters por Cloud API/BSP e contrato canônico separado | fixtures reais de cada provedor validam |
 | R12 | P1 | LLM inventa fatos | saída sem lastro | renderer determinístico ou `sourceField`, schema estrito e validador | nome/número/data ausente reprova e aciona template |
 | R13 | P1 | Dado completo em fronteira indevida | CPF/CNPJ/score em logs ou canais | classificação calculada, minimização, tokenização e DLP | testes por destino não encontram classes proibidas |
-| R14 | P1 | Governança de tratamento insuficiente | retenção e finalidade desconhecidas | inventário, RIPD, base legal, operadores, região, direitos e exclusão propagada | aprovações e testes de retenção/exclusão |
+| R14 | P1 | Governança LGPD insuficiente | retenção e finalidade desconhecidas | inventário, RIPD, base legal, operadores, região, direitos e exclusão propagada | aprovações e testes de retenção/exclusão |
 | R15 | P1 | ITSM usado como auditoria integral | tickets públicos/editáveis | resumo mínimo, ACL e auditoria append-only segregada | ITSM sem transcrição/PII desnecessária; auditoria íntegra |
 | R16 | P1 | Retry duplica escrita | timeout após commit remoto | `operationId`; estado `UNKNOWN`; consulta antes de repetir | fault injection após commit não duplica |
 | R17 | P1 | Fonte de verdade indefinida | valores conflitantes | ownership por campo, proveniência, versão, `asOf` e freshness | conflito é resolvido ou sinalizado, nunca ocultado |
@@ -1749,7 +1749,7 @@ Os valores finais dependem de capacidade e contrato dos fornecedores; os sinais 
 | Dados | freshness por fonte e blocos omitidos |
 | IA | rejeição NLU, divergência de provedor, rejeição factual e renderer de fallback |
 | Segurança | negações ABAC, step-up e replay detectado |
-| Tratamento de dados | itens vencidos de retenção e exclusões pendentes |
+| LGPD | itens vencidos de retenção e exclusões pendentes |
 
 Sinais mínimos adicionais da interpretação:
 
@@ -1841,8 +1841,8 @@ Arquitetura e integração:
 - Copilot Studio sem generative orchestration contra ERP/crédito;
 - renderer determinístico ou validação factual estrita;
 - DLP antes de cada fronteira;
-- reconciliação e métricas operacionais ativas;
-- trilha imutável, ACL e retenção definidas para cada destino.
+- RIPD, retenção, ACL, trilha imutável e direitos do titular definidos;
+- reconciliação e métricas operacionais ativas.
 
 Identidade:
 
@@ -1852,6 +1852,7 @@ Identidade:
 - step-up para finanças e mutações;
 - contexto de identidade inacessível à LLM;
 - trilha imutável e alertas de negação/risco;
+- RIPD, retenção e exclusão aprovados;
 - testes de adulteração e acesso cruzado automatizados.
 
 Interpretação:
@@ -1860,7 +1861,8 @@ Interpretação:
 - resolução de entidades somente na carteira;
 - guardrails de injeção, ID inventado e step-up financeiro automatizados;
 - renderer determinístico para `credit_analysis`;
-- failover, timeout e recusa de NLU cobertos por evidência.
+- failover, timeout e recusa de NLU cobertos por evidência;
+- RIPD atualizado para o novo processamento de utterance em Copilot e OpenAI.
 
 Critério de liberação: produção permanece bloqueada enquanto qualquer controle P0 não tiver teste automatizado e evidência de recuperação. Controles P1 exigem owner e aceite formal; exceções precisam de prazo, compensação e registro de risco. P2 deve estar no contrato e no pipeline de qualidade antes da primeira evolução incompatível.
 
@@ -1996,7 +1998,7 @@ Objetivo: evidências P0/P1 do runtime de interpretação.
 
 - Canário Copilot versus OpenAI nas mesmas fixtures; alerta de divergência.
 - Dashboards e runbooks: NLU, resolução 0/1/N, injeção, step-up, insights de crédito.
-- Inventário do novo processamento de utterance.
+- RIPD e inventário LGPD do novo processamento de utterance.
 - Chaos: timeout de provedor, timeout Tarken, ITSM indisponível (conversa segue).
 - Checklist de produção deste documento e P0 da matriz de riscos.
 
