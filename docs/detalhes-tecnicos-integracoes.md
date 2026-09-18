@@ -223,6 +223,8 @@ O consolidado inclui `asOf` e não mistura silenciosamente snapshots fora da jan
 | Carteira | TOTVS | Lecom não amplia autorização |
 | Cadastro fiscal | Lecom, por campo | conflitos são sinalizados |
 | Pedido integrado | TOTVS | Portal é principal durante captura |
+| Histórico de pedidos | TOTVS | janela comercial versionada; Portal só durante captura |
+| Registro de visita e anotações | Lecom | TOTVS só se o campo tiver ownership; conversa do WhatsApp não vira CRM |
 | Crédito | Tarken | títulos permanecem no TOTVS |
 | Visita comercial e anotações | TOTVS/Datasul (SFA) | Lecom não inventa visita; texto passa por DLP |
 | ETA/tracking | LoogAI | faturamento permanece no TOTVS |
@@ -241,7 +243,7 @@ Cada intenção possui schema próprio de requisitos. Resultado global não subs
 | `STALE` | Omitir ou rotular conforme matriz da intenção |
 | `PARTIAL_SUCCESS` | Responder apenas com fatos válidos e avisar limitação |
 
-Mutações, crédito decisório e criação de pedido não admitem sucesso parcial. Uma consulta de preparação de visita pode omitir visitas ou pedidos se o cadastro autorizado e ao menos um bloco nuclear válido existir. Crédito e logística omitidos não impedem o relatório. Especificação: [`preparacao-visita.md`](preparacao-visita.md).
+Mutações, crédito decisório e criação de pedido não admitem sucesso parcial. Uma consulta de preparação de visita (`visit_preparation`) pode omitir `last_visit_date`, `visit_notes` ou `order_history` se o cliente autorizado e os demais blocos válidos existirem; timeout de Lecom não gera `VISIT_GAP`.
 
 ## 8. LLM e validação factual
 

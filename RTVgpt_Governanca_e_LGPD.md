@@ -24,6 +24,8 @@ Fontes de referência: `README.md`, `docs/detalhes-tecnicos-integracoes.md`, `do
 | Visita comercial e anotações | TOTVS/Datasul (SFA) | Comercial | Histórico de visita não é inventado; DLP antes do WhatsApp |
 | Crédito e limite | Tarken (crédito) + TOTVS (títulos) | Crédito | Consulta assistida; não representa aprovação automática de pedido |
 | Pedido integrado | TOTVS/Datasul | Comercial + ERP | Portal é auxiliar durante captura; pós-integração vale TOTVS |
+| Histórico de pedidos (briefing) | TOTVS/Datasul | Comercial + ERP | Janela comercial versionada; não dump da carteira |
+| Registro de visita e anotações | Lecom | Comercial | Fonte de briefing de visita; conversa WhatsApp não substitui o CRM |
 | ETA/logística | LoogAI | Logística | ETA é independente do status financeiro/comercial |
 | Conversa e auditoria | Event store/auditoria imutável | Arquitetura + Segurança | ITSM não é trilha primária de auditoria |
 

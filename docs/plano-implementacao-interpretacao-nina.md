@@ -146,6 +146,7 @@ Saída: ponta a ponta WhatsApp → NLU → Digibee → resposta factual.
 Objetivo: a mesma NLU alimentar `order_query` e `visit_preparation` sem novo cérebro.
 
 - [ ] Mapear tópicos extraídos para a matriz de resultado mínimo já publicada.
+- [ ] `visit_preparation`: briefing com `last_visit_date`, `visit_notes` e `order_history` (Lecom + TOTVS), conforme o fluxo do README.
 - [ ] Resolução de pedido na carteira, análoga à de cliente.
 - [ ] Orquestrador `visit_preparation`: TOTVS (última visita, anotações, pedidos 180 dias) em paralelo após ABAC; Tarken/LoogAI só se AAL e tópico.
 - [ ] Parser civil `amanhã`/`hoje`/`segunda`/`10/09` com TZ `America/Sao_Paulo`; data omitida = hoje.
