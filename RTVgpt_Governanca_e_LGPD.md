@@ -21,6 +21,7 @@ Fontes de referência: `README.md`, `docs/detalhes-tecnicos-integracoes.md`, `do
 | Identidade RTV e vínculo telefone | IAM corporativo + cofre de canal | Segurança/IAM | OIDC + PKCE + MFA, sessão curta e revogação por mudança de vínculo |
 | Carteira vigente | TOTVS/Datasul | Comercial + ERP | ABAC exige carteira vigente antes de qualquer consulta de cliente/pedido |
 | Cadastro fiscal | Lecom (por campo) | Master Data | Lecom complementa, mas não expande autorização da carteira |
+| Visita comercial e anotações | TOTVS/Datasul (SFA) | Comercial | Histórico de visita não é inventado; DLP antes do WhatsApp |
 | Crédito e limite | Tarken (crédito) + TOTVS (títulos) | Crédito | Consulta assistida; não representa aprovação automática de pedido |
 | Pedido integrado | TOTVS/Datasul | Comercial + ERP | Portal é auxiliar durante captura; pós-integração vale TOTVS |
 | Histórico de pedidos (briefing) | TOTVS/Datasul | Comercial + ERP | Janela comercial versionada; não dump da carteira |

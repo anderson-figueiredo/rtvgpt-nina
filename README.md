@@ -8,7 +8,8 @@ Documentos complementares:
 - [`docs/riscos-integracao.md`](docs/riscos-integracao.md): riscos, controles e critérios de produção;
 - [`docs/validacao-rtv-cpf.md`](docs/validacao-rtv-cpf.md): autenticação corporativa, vínculo do RTV e uso restrito do CPF;
 - [`docs/interpretacao-nina.md`](docs/interpretacao-nina.md): especificação complementar de NLU, provedores e resolução na carteira;
-- [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta.
+- [`docs/plano-implementacao-interpretacao-nina.md`](docs/plano-implementacao-interpretacao-nina.md): fases para tornar a interpretação do WhatsApp robusta;
+- [`docs/preparacao-visita.md`](docs/preparacao-visita.md): intenção `visit_preparation`, fan-out do briefing e relatório de visita no WhatsApp.
 
 ## Princípios obrigatórios
 
@@ -310,7 +311,8 @@ Envelope interno, distinto do request nativo de Copilot ou OpenAI. Campos ausent
       }
     ],
     "orderNumbers": [],
-    "taxIds": []
+    "taxIds": [],
+    "dates": []
   },
   "pendingClarification": null
 }
@@ -378,7 +380,7 @@ Uma intenção principal por turno. Tópicos extras entram em `requestedTopics[]
 | Número de pedido | Regex de catálogo | `12345`, `pedido 12345` |
 | CNPJ/CPF | Detector; tokenização imediata | nunca enviado completo ao modelo nem ao WhatsApp |
 | Nome de cliente | LLM + busca na carteira | `Hommerson Agro` |
-| Datas | Parser civil + timezone de negócio | `hoje`, `amanhã`, `10/09` |
+| Datas | Parser civil + timezone de negócio | `hoje`, `amanhã`, `segunda`, `10/09`; data de visita omitida → hoje em `America/Sao_Paulo` |
 
 ```mermaid
 flowchart LR
@@ -502,6 +504,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | `MISSING_CUSTOMER` | Qual cliente? | Nova menção → resolução |
 | `AMBIGUOUS_CUSTOMER` | Lista curta da carteira | `clarification_response` com índice ou nome |
+| `AMBIGUOUS_DATE` | Confirmar o dia da visita | Parser civil |
 | `MISSING_AMOUNT` | Qual valor do pedido a checar? | Parser + NLU |
 | `AMBIGUOUS_AMOUNT` | Confirmar o valor em reais | Parser |
 | `LOW_CONFIDENCE` | Reformular o pedido | Nova interpretação |
@@ -795,6 +798,9 @@ sequenceDiagram
     participant D as Digibee
     participant L as Lecom
     participant T as TOTVS Datasul
+    participant P as Portal de Pedidos
+    participant K as Tarken
+    participant G as LoogAI
     participant R as Renderer validador
     participant O as Outbox
     participant W as WhatsApp
@@ -1042,6 +1048,7 @@ ITSM e WhatsApp são efeitos independentes da outbox. Falha de ITSM não bloquei
 | Histórico de pedidos | TOTVS | Portal | janela comercial versionada no TOTVS; Portal só durante captura |
 | Registro de visita e anotações | Lecom | TOTVS | Lecom prevalece; conversa do WhatsApp não vira CRM |
 | Entrega/ETA | LoogAI | TOTVS | LoogAI para tracking; TOTVS para faturamento |
+| Visita comercial e anotações | TOTVS/Datasul (SFA) | cadastro Lecom | TOTVS para histórico de visita; Lecom não inventa visita |
 | Conversa/eventos | Event store | ITSM | event store prevalece |
 
 Todo bloco consolidado inclui `source`, `sourceUpdatedAt`, `observedAt`, `version` e `staleness`. A resposta possui `asOf`; dados fora da janela são omitidos ou marcados `STALE`, nunca combinados silenciosamente.
@@ -1060,12 +1067,12 @@ Insights são determinísticos, versionados e testados:
 | `OVERDUE_TITLES` | há título vencido autorizado |
 | `DELIVERY_EXCEPTION` | entrega possui ocorrência |
 | `OPEN_ORDERS` | há pedidos ainda abertos |
-| `VISIT_GAP` | 45 dias ou mais desde a última visita |
+| `VISIT_GAP` | 45 dias ou mais desde a última visita, em relação à data planejada (`plannedVisitDate`) |
 | `VOLUME_DROP` | volume da janela inferior ao período comparável |
 | `MISSING_RECURRING_SKU` | item recorrente ausente na janela atual |
 | `TALKING_POINT` | pauta derivada de um ou mais códigos anteriores |
 
-Fatos devem ser renderizados por template sempre que possível. Se uma LLM for usada, cada afirmação factual referencia `sourceField`; schema estrito e validador rejeitam nomes, números, datas ou valores ausentes. Em falha ou recusa, usa-se renderer determinístico. Histórico conversacional livre não é enviado à etapa de composição.
+Fatos devem ser renderizados por template sempre que possível. Se uma LLM for usada, cada afirmação factual referencia `sourceField`; schema estrito e validador rejeitam nomes, números, datas ou valores ausentes. Em falha ou recusa, usa-se renderer determinístico. Histórico conversacional livre não é enviado à etapa de composição. No briefing de visita, a pauta só pode repetir códigos `insights` lastreados.
 
 “Nina → adapter LLM” é um contrato interno, usado na NLU e, se necessário, na composição. O adapter mapeia para o provedor `microsoft_copilot` (Azure OpenAI / Microsoft Foundry) ou `openai`, com modelo em allowlist, structured output, timeout, recusa e resposta incompleta. Esse envelope não é o request nativo da Responses API nem o JSON auto-detectado do Copilot Studio. O bot Copilot no Teams permanece canal e handoff; não orquestra sistemas de origem.
 

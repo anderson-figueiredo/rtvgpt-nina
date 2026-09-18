@@ -4,7 +4,7 @@ A Nina existente no Teams foi construída com Microsoft Copilot Studio. Esse age
 
 Este documento define o runtime de interpretação: um classificador de catálogo fechado, extração de menções não confiáveis, resolução de entidades na carteira do RTV e só então as consultas Digibee já previstas na arquitetura. Os provedores de LLM são Microsoft Copilot (Azure OpenAI / Microsoft Foundry) e OpenAI, atrás do mesmo adapter interno.
 
-Complementa [`README.md`](../README.md), [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md), [`validacao-rtv-cpf.md`](validacao-rtv-cpf.md) e [`riscos-integracao.md`](riscos-integracao.md). O plano de entrega está em [`plano-implementacao-interpretacao-nina.md`](plano-implementacao-interpretacao-nina.md).
+Complementa [`README.md`](../README.md), [`detalhes-tecnicos-integracoes.md`](detalhes-tecnicos-integracoes.md), [`validacao-rtv-cpf.md`](validacao-rtv-cpf.md), [`riscos-integracao.md`](riscos-integracao.md) e [`preparacao-visita.md`](preparacao-visita.md). O plano de entrega está em [`plano-implementacao-interpretacao-nina.md`](plano-implementacao-interpretacao-nina.md).
 
 ## Objetivos
 
@@ -97,7 +97,8 @@ Envelope interno, distinto do request nativo de Copilot ou OpenAI:
       }
     ],
     "orderNumbers": [],
-    "taxIds": []
+    "taxIds": [],
+    "dates": []
   },
   "pendingClarification": null
 }
@@ -185,6 +186,14 @@ Insights adicionais:
 | `CREDIT_SUFFICIENT_FOR_AMOUNT` | valor pedido menor ou igual ao disponível e sem fato de bloqueio na origem |
 
 Esses códigos não são aprovação de crédito.
+
+### Matriz mínima de `visit_preparation`
+
+| Resultado | Obrigatório | Freshness | `NOT_FOUND` / 0 na carteira | `TIMEOUT` / `STALE` | `FORBIDDEN` |
+| --- | --- | --- | --- | --- | --- |
+| Relatório de visita | Cliente na carteira + AAL2 | Cadastro 24 h; visitas/pedidos 15 min | Fora da carteira: resposta genérica; sem menção: clarificação | Omitir bloco; não inventar última visita nem pedido | Resposta genérica e evento de segurança |
+
+Tópicos nucleares: `last_visit`, `visit_notes`, `order_history`. Crédito e logística são opcionais e dependem de AAL financeiro / disponibilidade da origem. `PARTIAL_SUCCESS` é permitido. Detalhe do fan-out, DLP de anotações e texto do WhatsApp: [`preparacao-visita.md`](preparacao-visita.md).
 
 ## Extração híbrida
 
@@ -314,6 +323,7 @@ A conversa guarda um slot pendente versionado (`pendingClarification`), não um 
 | --- | --- | --- |
 | `MISSING_CUSTOMER` | Qual cliente? | Nova menção → resolução |
 | `AMBIGUOUS_CUSTOMER` | Lista curta da carteira | `clarification_response` com índice ou nome |
+| `AMBIGUOUS_DATE` | Confirmar o dia da visita | Parser civil |
 | `MISSING_AMOUNT` | Qual valor do pedido a checar? | Parser + NLU |
 | `AMBIGUOUS_AMOUNT` | Confirmar o valor em reais | Parser |
 | `LOW_CONFIDENCE` | Reformular o pedido | Nova interpretação |
@@ -360,6 +370,6 @@ Logs de NLU guardam hash/token da utterance, intenção, flags e provedor. Não 
 - Copilot Studio sem generative orchestration contra sistemas de origem.
 - Resolução de entidades somente na carteira, com testes de acesso cruzado.
 - Guardrails de injeção, ID inventado e step-up financeiro automatizados.
-- Renderer determinístico para `credit_analysis`.
+- Renderer determinístico para `credit_analysis` e `visit_preparation`.
 - Failover, timeout e recusa de NLU cobertos por evidência.
 - RIPD atualizado para o novo processamento de utterance em Copilot e OpenAI.

@@ -13,10 +13,11 @@ Especificação durável: [`interpretacao-nina.md`](interpretacao-nina.md). Orig
 | Documento | Uso neste plano |
 | --- | --- |
 | [Interpretação da Nina](interpretacao-nina.md) | Contrato NLU, catálogo, resolução, provedores, exemplo Hommerson Agro |
+| [Preparação para visita](preparacao-visita.md) | Intenção `visit_preparation`, fan-out, DLP de anotações e relatório WhatsApp |
 | [Arquitetura de referência](../README.md) | Inbox, identidade, ABAC, composição, outbox |
 | [Validação RTV](validacao-rtv-cpf.md) | OIDC/MFA, carteira, step-up, resposta genérica |
 | [Detalhes técnicos](detalhes-tecnicos-integracoes.md) | Pipelines Digibee, schemas, consolidação |
-| [Riscos](riscos-integracao.md) | P0/P1 existentes; novos riscos R26–R31 |
+| [Riscos](riscos-integracao.md) | P0/P1 existentes; novos riscos R26–R32 |
 
 ## Requirements Summary
 
@@ -29,6 +30,7 @@ Especificação durável: [`interpretacao-nina.md`](interpretacao-nina.md). Orig
 - Consultar Tarken e títulos TOTVS só após ABAC do recurso e AAL financeiro.
 - Responder com fatos de origem e insights `CREDIT_*`; não aprovar pedido.
 - Clarificar homônimos, valor ambíguo e baixa confiança, com slot pendente versionado.
+- Reconhecer preparação de visita (`vou visitar o cliente X amanhã`) e devolver relatório WhatsApp com última visita, anotações e histórico de pedidos.
 - Manter o bot Copilot no Teams como canal/handoff, sem orquestração generativa contra ERP.
 
 ### Não funcionais
@@ -146,11 +148,16 @@ Objetivo: a mesma NLU alimentar `order_query` e `visit_preparation` sem novo cé
 - [ ] Mapear tópicos extraídos para a matriz de resultado mínimo já publicada.
 - [ ] `visit_preparation`: briefing com `last_visit_date`, `visit_notes` e `order_history` (Lecom + TOTVS), conforme o fluxo do README.
 - [ ] Resolução de pedido na carteira, análoga à de cliente.
+- [ ] Orquestrador `visit_preparation`: TOTVS (última visita, anotações, pedidos 180 dias) em paralelo após ABAC; Tarken/LoogAI só se AAL e tópico.
+- [ ] Parser civil `amanhã`/`hoje`/`segunda`/`10/09` com TZ `America/Sao_Paulo`; data omitida = hoje.
+- [ ] Renderer determinístico do relatório WhatsApp (última visita, anotações, histórico); teto 2000 caracteres.
+- [ ] DLP de anotações (telefone/CPF/CNPJ) antes do canal.
+- [ ] `VISIT_GAP` somente com 45 dias ou mais; visitas `TIMEOUT` não inventam data.
 - [ ] `clarification_response` retoma a intenção pendente por `conversationVersion`.
 - [ ] `human_handoff_request` reusa o fallback Teams existente.
 - [ ] Corpus e testes para multi-tópico (“previsão do pedido 12345 e meu limite”).
 
-Saída: uma interpretação, vários orquestradores já especificados.
+Saída: uma interpretação, vários orquestradores já especificados. Relatório de visita ponta a ponta conforme [`preparacao-visita.md`](preparacao-visita.md).
 
 ### Fase 6 — Operação, canário e produção
 
@@ -171,6 +178,7 @@ Saída: go/no-go com evidências; Copilot Studio permanece canal, não orquestra
 | Sessão OIDC + vínculo telefone–RTV | Sem sujeito não há carteira | Fan-out e NLU de crédito |
 | Policy engine ABAC vigente | Carteira e AAL financeiro | Fase 3–4 |
 | Contrato Tarken / TOTVS no Digibee | Fatos de crédito e títulos | Fase 4 |
+| Módulo comercial/SFA de visitas no TOTVS | Última visita e anotações | Núcleo de `visit_preparation` |
 | Adapter WhatsApp + inbox | Evento canônico | Todas as fases de runtime |
 | Aprovação de região/retenção Copilot e OpenAI | DLP e RIPD | Tráfego real de utterance |
 | Inventário Copilot Studio | Corpus e desligar tools perigosas | Fase 0; não bloqueia schemas da Fase 1 |
